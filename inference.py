@@ -50,11 +50,6 @@ parser.add_argument(
     default=1,
     help="Number of samples to generate per prompt",
 )
-parser.add_argument(
-    "--save_with_index",
-    action="store_true",
-    help="Whether to save the video using the index or prompt as the filename",
-)
 args = parser.parse_args()
 
 # Initialize distributed inference
@@ -236,12 +231,8 @@ for i, batch_data in tqdm(enumerate(dataloader), disable=(local_rank != 0)):
         model = "regular" if not args.use_ema else "ema"
         for seed_idx in range(args.num_samples):
             # All processes save their videos
-            if args.save_with_index:
-                output_path = os.path.join(
-                    args.output_folder, f"{idx}-{seed_idx}_{model}.mp4"
-                )
-            else:
-                output_path = os.path.join(
-                    args.output_folder, f"{prompt[:100]}-{seed_idx}.mp4"
-                )
+            output_path = os.path.join(
+                args.output_folder,
+                f"{idx}-{prompt[:50].replace(' ', '_')}-{seed_idx}_{model}.mp4",
+            )
             write_video(output_path, video[seed_idx], fps=16)

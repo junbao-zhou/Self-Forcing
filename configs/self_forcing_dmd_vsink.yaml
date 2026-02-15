@@ -1,3 +1,7 @@
+defaults:
+  - default_config
+  - _self_
+
 generator_ckpt: checkpoints/ode_init.pt
 generator_fsdp_wrap_strategy: size
 real_score_fsdp_wrap_strategy: size

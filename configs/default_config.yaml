@@ -18,3 +18,14 @@ num_samples: 1
 height: 480
 width: 832
 num_frames: 81
+
+no_save: false
+no_visualize: false
+logdir: logs
+wandb_save_dir: ""
+disable_wandb: false
+
+# Recommended: prevent Hydra from chdir into run dir (optional but common)
+hydra:
+  job:
+    chdir: false

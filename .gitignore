@@ -3,3 +3,7 @@ __pycache__
 
 wan_models
 checkpoints
+
+output*
+
+*logs/

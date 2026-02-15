@@ -42,3 +42,15 @@ def merge_dict_list(
             # for non-tensor values, we just copy the value from the first item
             merged_dict[k] = v
     return merged_dict
+
+
+def format_dict(dict_obj, indent: int = 4, indent_per_level: int = 4) -> str:
+    # format a dict into string for one item per line
+    formatted_str = ""
+    for k, v in dict_obj.items():
+        if isinstance(v, dict):
+            formatted_str += f"{' ' * indent}{k}:\n{format_dict(v, indent=indent+indent_per_level, indent_per_level=indent_per_level)}"
+        else:
+            formatted_str += f"{' ' * indent}{k}: {v}\n"
+    formatted_str = "{\n" + formatted_str + ' ' * (indent - indent_per_level) + "}\n"
+    return formatted_str

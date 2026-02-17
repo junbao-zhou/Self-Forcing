@@ -44,7 +44,6 @@ if __name__ == "__main__":
         "--config-path=configs",
         f"--config-name={config_name}",
         f"logdir=logs/{config_name}-{args.save_id}",
-        "real_name=Wan2.1-T2V-1.3B",
         "disable_wandb=true",
     ]
     torchrun_main()

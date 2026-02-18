@@ -105,24 +105,16 @@ class StreamInferenceWrapper:
         return (latent_frame_index - 1) * 4 + 1
 
     def block_to_video_index(self, block_index: int) -> int:
-        return self.latent_to_video_index(
-            self.block_to_latent_index(block_index)
-        )
+        return self.latent_to_video_index(self.block_to_latent_index(block_index))
 
     def get_sampled_noise(
         self,
         start_block_index: int,
         end_block_index: int,
     ):
-        current_start_latent_frame_index = self.block_to_latent_index(
-            start_block_index
-        )
-        current_end_latent_frame_index = self.block_to_latent_index(
-            end_block_index
-        )
-        print(
-            f"{current_start_latent_frame_index = } | {current_end_latent_frame_index = }"
-        )
+        current_start_latent_frame_index = self.block_to_latent_index(start_block_index)
+        current_end_latent_frame_index = self.block_to_latent_index(end_block_index)
+        print(f"{current_start_latent_frame_index = } | {current_end_latent_frame_index = }")
 
         assert current_start_latent_frame_index < self.initial_noise.shape[1]
         assert current_end_latent_frame_index <= self.initial_noise.shape[1]
@@ -170,9 +162,7 @@ class StreamInferenceWrapper:
         start_latent_frame_index: int,
     ):
         video = get_video(video)  # t, h, w, c
-        start_video_frame_index = self.latent_to_video_index(
-            start_latent_frame_index
-        )
+        start_video_frame_index = self.latent_to_video_index(start_latent_frame_index)
         if self.video is None:
             self.video = video
         else:
@@ -187,23 +177,21 @@ class StreamInferenceWrapper:
         if start_block_index == 0:
             current_chunk_latent = self.recorded_latents[
                 :,
-                self.block_to_latent_index(
-                    start_block_index
-                ) : self.block_to_latent_index(end_block_index),
+                self.block_to_latent_index(start_block_index) : self.block_to_latent_index(
+                    end_block_index
+                ),
             ]
             current_chunk_video = self.decode_to_pixel(current_chunk_latent)
         else:
             current_chunk_latent = self.recorded_latents[
                 :,
-                self.block_to_latent_index(
-                    start_block_index - 1
-                ) : self.block_to_latent_index(end_block_index),
+                self.block_to_latent_index(start_block_index - 1) : self.block_to_latent_index(
+                    end_block_index
+                ),
             ]
             current_chunk_video = self.decode_to_pixel(current_chunk_latent)
             current_chunk_video = current_chunk_video[:, 9:]
-        self.update_video(
-            current_chunk_video, self.block_to_latent_index(start_block_index)
-        )
+        self.update_video(current_chunk_video, self.block_to_latent_index(start_block_index))
 
     def inference(
         self,
@@ -219,9 +207,7 @@ class StreamInferenceWrapper:
     {start_block_index = }  |  {end_block_index = }
 """
         )
-        sampled_noise = self.get_sampled_noise(
-            start_block_index, end_block_index
-        )
+        sampled_noise = self.get_sampled_noise(start_block_index, end_block_index)
         prompts = [prompt]
 
         initial_latents = self.get_initial_latents(
@@ -300,9 +286,7 @@ def main():
     print(f"Number of prompts: {num_prompts}")
 
     sampler = SequentialSampler(dataset)
-    dataloader = DataLoader(
-        dataset, batch_size=1, sampler=sampler, num_workers=0, drop_last=False
-    )
+    dataloader = DataLoader(dataset, batch_size=1, sampler=sampler, num_workers=0, drop_last=False)
 
     os.makedirs(output_folder, exist_ok=True)
 
@@ -335,11 +319,7 @@ def main():
         # For text-to-video, batch is just the text prompt
         prompt = batch["prompts"][0]
         print(f"{prompt = }")
-        extended_prompt = (
-            batch["extended_prompts"][0]
-            if "extended_prompts" in batch
-            else None
-        )
+        extended_prompt = batch["extended_prompts"][0] if "extended_prompts" in batch else None
         print(f"{extended_prompt = }")
 
         set_seed(seed)

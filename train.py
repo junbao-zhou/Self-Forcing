@@ -1,5 +1,3 @@
-import argparse
-import os
 import time
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -12,66 +10,14 @@ from trainer import (
     ScoreDistillationTrainer,
 )
 
-import torch.distributed as dist
 import logging
 from pathlib import Path
 from utils.misc import format_dict
-
-
-def _current_node_rank():
-    if dist.is_available() and dist.is_initialized():
-        return dist.get_rank() // dist.get_world_size()
-    # fallback to env vars set by torchrun/launch
-    return int(os.environ.get("NODE_RANK", 0))
-
-
-def _current_process_rank():
-    if dist.is_available() and dist.is_initialized():
-        return dist.get_rank()
-    # fallback to env vars set by torchrun/launch
-    return int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", 0)))
-
-
-def _add_rank_to_record():
-    factory = logging.getLogRecordFactory()
-
-    def record_factory(*args, **kwargs):
-        record = factory(*args, **kwargs)
-        record.rank = _current_process_rank()
-        return record
-
-    logging.setLogRecordFactory(record_factory)
-
-
-def _configure_logging(
-    logdir: Path,
-):
-    """
-    Hydra installs its own logging handlers before main() runs.
-    This function forcefully replaces them so our file + format take effect.
-    """
-    _add_rank_to_record()
-
-    ts = time.strftime("%Y-%m-%d_%H-%M-%S")
-    logfile = logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}-{ts}.log"
-
-    fmt = logging.Formatter(
-        "[rank:{rank}] [{levelname}] [{asctime}] : {message}",
-        style="{",
-    )
-
-    file_handler = logging.FileHandler(logfile, mode="a")
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(fmt)
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
-    stream_handler.setFormatter(fmt)
-
-    # Replace existing handlers (Hydra already configured them)
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.handlers[:] = [file_handler, stream_handler]
+from utils.logging import (
+    _current_node_rank,
+    _current_process_rank,
+    _configure_logging,
+)
 
 
 @hydra.main(
@@ -95,7 +41,10 @@ def main(
         logdir = Path(orig_cwd) / logdir
     logdir.mkdir(parents=True, exist_ok=True)
 
-    _configure_logging(logdir)
+    time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
+    _configure_logging(
+        logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}-{time_str}.log"
+    )
 
     logging.info(
         f"""

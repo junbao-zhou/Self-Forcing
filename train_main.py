@@ -3,8 +3,6 @@ import os
 os.environ["NCCL_DEBUG"] = "WARN"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 
-machine_num = 8
-
 gpu_num = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
 MASTER_ADDR = os.environ.get("MASTER_ADDR", "127.0.0.1")
@@ -24,6 +22,12 @@ def build_arg_parser():
         type=str,
         help="The id for this training run, used for saving checkpoints and logs",
     )
+    parser.add_argument(
+        "--machine_num",
+        type=int,
+        default=8,
+        help="Number of machines to use for distributed training",
+    )
     return parser
 
 
@@ -34,7 +38,7 @@ if __name__ == "__main__":
     config_name = "self_forcing_dmd"
     sys.argv = [
         "torchrun",
-        f"--nnodes={machine_num}",
+        f"--nnodes={args.machine_num}",
         f"--nproc_per_node={gpu_num}",
         "--rdzv_id=5235",
         "--rdzv_backend=c10d",

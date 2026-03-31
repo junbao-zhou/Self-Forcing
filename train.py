@@ -53,6 +53,22 @@ config = {format_dict(config)}
 """
     )
 
+    if _current_node_rank() == 0 and _current_process_rank() == 0:
+        import copy_codes
+
+        code_backup_dir = logdir / "codes"
+        copy_codes.copy_local(
+            copy_codes.collect_files(
+                Path(orig_cwd),
+                copy_codes.build_matcher(copy_codes.load_gitignore(Path(orig_cwd))),
+                code_only=True,
+            ),
+            Path(orig_cwd),
+            code_backup_dir,
+            overwrite=True,
+        )
+        logging.info(f"Code backup saved to {code_backup_dir}")
+
     if config.trainer == "diffusion":
         trainer = DiffusionTrainer(config)
     elif config.trainer == "gan":

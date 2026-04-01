@@ -17,6 +17,7 @@ from utils.logging import (
     _current_node_rank,
     _current_process_rank,
     _configure_logging,
+    string_to_logging_level,
 )
 
 
@@ -43,7 +44,8 @@ def main(
 
     time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
     _configure_logging(
-        logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}-{time_str}.log"
+        logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}-{time_str}.log",
+        logging_level=string_to_logging_level(config.logging_level),
     )
 
     logging.info(

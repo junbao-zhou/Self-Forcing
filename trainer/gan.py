@@ -1,6 +1,4 @@
-import gc
 import logging
-from pathlib import Path
 
 from utils.dataset import ShardingLMDBDataset, cycle
 from utils.distributed import (
@@ -9,27 +7,20 @@ from utils.distributed import (
     fsdp_state_dict,
     launch_distributed_job,
 )
-from utils.misc import set_seed, merge_dict_list
+from utils.misc import merge_dict_list
 import torch.distributed as dist
 from omegaconf import OmegaConf
 from model import GAN
 import torch
-from torch.utils.tensorboard import SummaryWriter
-import time
 import os
-from pipeline import CausalInferencePipeline
-from torchvision.io import write_video
-from einops import rearrange
+from trainer.base import BaseTrainer
 
 
-class Trainer:
+class Trainer(BaseTrainer):
     def __init__(
         self,
         config,
     ):
-        self.config = config
-        self.step = 0
-
         # Step 1: Initialize the distributed training environment (rank, seed, dtype, logging etc.)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
@@ -38,9 +29,7 @@ class Trainer:
         global_rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
-        self.dtype = torch.bfloat16 if config.mixed_precision else torch.float32
-        self.device = torch.cuda.current_device()
-        self.is_main_process = global_rank == 0
+        super().__init__(config)
         self.causal = config.causal
 
         # Configuration for discriminator warmup
@@ -49,21 +38,6 @@ class Trainer:
         if self.in_discriminator_warmup and self.is_main_process:
             print(f"Starting with discriminator warmup for {self.discriminator_warmup_steps} steps")
         self.loss_scale = getattr(config, "loss_scale", 1.0)
-
-        # use a random seed for the training
-        if config.seed == 0:
-            random_seed = torch.randint(0, 10000000, (1,), device=self.device)
-            dist.broadcast(random_seed, src=0)
-            config.seed = random_seed.item()
-
-        set_seed(config.seed + global_rank)
-
-        if self.is_main_process:
-            self.writer = SummaryWriter(log_dir=os.path.join(config.logdir, "tensorboard"))
-        else:
-            self.writer = None
-
-        self.output_path = config.logdir
 
         # Step 2: Initialize the model and optimizer
         self.model = GAN(config, device=self.device)
@@ -208,7 +182,6 @@ class Trainer:
 
         self.max_grad_norm_generator = getattr(config, "max_grad_norm_generator", 10.0)
         self.max_grad_norm_critic = getattr(config, "max_grad_norm_critic", 10.0)
-        self.previous_time = None
 
     def save(
         self,
@@ -229,66 +202,7 @@ class Trainer:
                 "critic": critic_state_dict,
             }
 
-        if self.is_main_process:
-            os.makedirs(
-                os.path.join(self.output_path, f"checkpoint_model_{self.step:06d}"),
-                exist_ok=True,
-            )
-            torch.save(
-                state_dict,
-                os.path.join(
-                    self.output_path,
-                    f"checkpoint_model_{self.step:06d}",
-                    "model.pt",
-                ),
-            )
-            logging.info(
-                f"Model saved to {os.path.join(self.output_path, f'checkpoint_model_{self.step:06d}', 'model.pt')}"
-            )
-
-            # Keep only max_checkpoints
-            max_checkpoints = self.config.max_checkpoints
-            checkpoints = sorted(
-                [d for d in os.listdir(self.output_path) if d.startswith("checkpoint_model_")]
-            )
-            if len(checkpoints) > max_checkpoints:
-                import shutil
-
-                for old_ckpt in checkpoints[:-max_checkpoints]:
-                    shutil.rmtree(os.path.join(self.output_path, old_ckpt))
-                    logging.info(f"Deleted old checkpoint: {old_ckpt}")
-
-    def run_inference(self):
-        # All ranks must participate in fsdp_state_dict gathering
-        logging.info("Gathering generator state dict for inference...")
-        generator_state = fsdp_state_dict(self.model.generator)
-
-        if not self.is_main_process:
-            return
-
-        with open("prompts/MovieGenVideoBench_extended.txt", "r") as f:
-            prompts = [line.strip() for line in f.readlines()[0:7:2]]
-
-        pipeline = CausalInferencePipeline(self.config, device=self.device)
-        pipeline.generator.load_state_dict(generator_state)
-        pipeline = pipeline.to(dtype=torch.bfloat16)
-
-        with torch.no_grad():
-            for idx, prompt in enumerate(prompts):
-                noise = torch.randn([1, 21, 16, 60, 104], device=self.device, dtype=torch.bfloat16)
-                video, _ = pipeline.inference(
-                    noise=noise, text_prompts=[prompt], return_latents=True
-                )
-                video = rearrange(video, "b t c h w -> b t h w c").cpu()
-                video = 255.0 * video
-                output_video_dir = Path(self.output_path) / f"inference_videos_step{self.step:06d}"
-                output_video_dir.mkdir(parents=True, exist_ok=True)
-                output_video_path = output_video_dir / f"{idx}-{prompt[:50].replace(' ', '_')}.mp4"
-                write_video(output_video_path, video[0], fps=8)
-                logging.info(f"Saved inference video to {output_video_path}")
-
-        del pipeline
-        torch.cuda.empty_cache()
+        self.save_checkpoint(state_dict)
 
     def fwdbwd_one_step(
         self,
@@ -504,7 +418,7 @@ class Trainer:
                 self.config.inference_interval > 0
                 and self.step % self.config.inference_interval == 0
             ):
-                self.run_inference()
+                self.run_inference(self.model.generator)
 
             # Logging
             wandb_loss_dict = {
@@ -533,29 +447,13 @@ class Trainer:
                 if self.in_discriminator_warmup:
                     warmup_status = f"[WARMUP {self.step}/{self.discriminator_warmup_steps}] Training only discriminator params"
                     print(warmup_status)
-                    if self.writer:
-                        wandb_loss_dict.update({"warmup_status": 1.0})
+                    wandb_loss_dict.update({"warmup_status": 1.0})
 
-                if self.writer:
-                    for key, value in wandb_loss_dict.items():
-                        self.writer.add_scalar(key, value, self.step)
+                self.log_metrics(wandb_loss_dict)
 
-            if self.step % self.config.gc_interval == 0:
-                if dist.get_rank() == 0:
-                    logging.info("DistGarbageCollector: Running GC.")
-                gc.collect()
-                torch.cuda.empty_cache()
-
-            if self.is_main_process:
-                current_time = time.time()
-                if self.previous_time is None:
-                    self.previous_time = current_time
-                else:
-                    if self.writer:
-                        self.writer.add_scalar(
-                            "per_iteration_time", current_time - self.previous_time, self.step
-                        )
-                    self.previous_time = current_time
+            self.maybe_run_gc()
+            torch.cuda.empty_cache()
+            self.log_iteration_time()
 
     def all_gather_dict(
         self,

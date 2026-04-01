@@ -26,6 +26,9 @@ logging_level: debug
 wandb_save_dir: ""
 disable_wandb: false
 
+max_checkpoints: 5
+inference_interval: 500
+
 # Recommended: prevent Hydra from chdir into run dir (optional but common)
 hydra:
   job:

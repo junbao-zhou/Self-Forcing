@@ -1,5 +1,6 @@
 import gc
 import logging
+from pathlib import Path
 
 from utils.dataset import ShardingLMDBDataset, cycle
 from utils.distributed import (
@@ -13,9 +14,12 @@ import torch.distributed as dist
 from omegaconf import OmegaConf
 from model import GAN
 import torch
-import wandb
+from torch.utils.tensorboard import SummaryWriter
 import time
 import os
+from pipeline import CausalInferencePipeline
+from torchvision.io import write_video
+from einops import rearrange
 
 
 class Trainer:
@@ -38,7 +42,6 @@ class Trainer:
         self.device = torch.cuda.current_device()
         self.is_main_process = global_rank == 0
         self.causal = config.causal
-        self.disable_wandb = config.disable_wandb
 
         # Configuration for discriminator warmup
         self.discriminator_warmup_steps = getattr(config, "discriminator_warmup_steps", 0)
@@ -55,16 +58,10 @@ class Trainer:
 
         set_seed(config.seed + global_rank)
 
-        if self.is_main_process and not self.disable_wandb:
-            wandb.login(host=config.wandb_host, key=config.wandb_key)
-            wandb.init(
-                config=OmegaConf.to_container(config, resolve=True),
-                name=config.config_name,
-                mode="online",
-                entity=config.wandb_entity,
-                project=config.wandb_project,
-                dir=config.wandb_save_dir,
-            )
+        if self.is_main_process:
+            self.writer = SummaryWriter(log_dir=os.path.join(config.logdir, "tensorboard"))
+        else:
+            self.writer = None
 
         self.output_path = config.logdir
 
@@ -245,14 +242,53 @@ class Trainer:
                     "model.pt",
                 ),
             )
-            print(
-                "Model saved to",
-                os.path.join(
-                    self.output_path,
-                    f"checkpoint_model_{self.step:06d}",
-                    "model.pt",
-                ),
+            logging.info(
+                f"Model saved to {os.path.join(self.output_path, f'checkpoint_model_{self.step:06d}', 'model.pt')}"
             )
+
+            # Keep only max_checkpoints
+            max_checkpoints = self.config.max_checkpoints
+            checkpoints = sorted(
+                [d for d in os.listdir(self.output_path) if d.startswith("checkpoint_model_")]
+            )
+            if len(checkpoints) > max_checkpoints:
+                import shutil
+
+                for old_ckpt in checkpoints[:-max_checkpoints]:
+                    shutil.rmtree(os.path.join(self.output_path, old_ckpt))
+                    logging.info(f"Deleted old checkpoint: {old_ckpt}")
+
+    def run_inference(self):
+        # All ranks must participate in fsdp_state_dict gathering
+        logging.info("Gathering generator state dict for inference...")
+        generator_state = fsdp_state_dict(self.model.generator)
+
+        if not self.is_main_process:
+            return
+
+        with open("prompts/MovieGenVideoBench_extended.txt", "r") as f:
+            prompts = [line.strip() for line in f.readlines()[0:7:2]]
+
+        pipeline = CausalInferencePipeline(self.config, device=self.device)
+        pipeline.generator.load_state_dict(generator_state)
+        pipeline = pipeline.to(dtype=torch.bfloat16)
+
+        with torch.no_grad():
+            for idx, prompt in enumerate(prompts):
+                noise = torch.randn([1, 21, 16, 60, 104], device=self.device, dtype=torch.bfloat16)
+                video, _ = pipeline.inference(
+                    noise=noise, text_prompts=[prompt], return_latents=True
+                )
+                video = rearrange(video, "b t c h w -> b t h w c").cpu()
+                video = 255.0 * video
+                output_video_dir = Path(self.output_path) / f"inference_videos_step{self.step:06d}"
+                output_video_dir.mkdir(parents=True, exist_ok=True)
+                output_video_path = output_video_dir / f"{idx}-{prompt[:50].replace(' ', '_')}.mp4"
+                write_video(output_video_path, video[0], fps=8)
+                logging.info(f"Saved inference video to {output_video_path}")
+
+        del pipeline
+        torch.cuda.empty_cache()
 
     def fwdbwd_one_step(
         self,
@@ -463,6 +499,13 @@ class Trainer:
                 self.save()
                 torch.cuda.empty_cache()
 
+            # Run inference
+            if (
+                self.config.inference_interval > 0
+                and self.step % self.config.inference_interval == 0
+            ):
+                self.run_inference()
+
             # Logging
             wandb_loss_dict = {
                 "generator_grad_norm": generator_log_dict["generator_grad_norm"],
@@ -490,11 +533,12 @@ class Trainer:
                 if self.in_discriminator_warmup:
                     warmup_status = f"[WARMUP {self.step}/{self.discriminator_warmup_steps}] Training only discriminator params"
                     print(warmup_status)
-                    if not self.disable_wandb:
+                    if self.writer:
                         wandb_loss_dict.update({"warmup_status": 1.0})
 
-                if not self.disable_wandb:
-                    wandb.log(wandb_loss_dict, step=self.step)
+                if self.writer:
+                    for key, value in wandb_loss_dict.items():
+                        self.writer.add_scalar(key, value, self.step)
 
             if self.step % self.config.gc_interval == 0:
                 if dist.get_rank() == 0:
@@ -507,10 +551,9 @@ class Trainer:
                 if self.previous_time is None:
                     self.previous_time = current_time
                 else:
-                    if not self.disable_wandb:
-                        wandb.log(
-                            {"per iteration time": current_time - self.previous_time},
-                            step=self.step,
+                    if self.writer:
+                        self.writer.add_scalar(
+                            "per_iteration_time", current_time - self.previous_time, self.step
                         )
                     self.previous_time = current_time
 

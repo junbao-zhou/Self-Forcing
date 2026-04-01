@@ -22,6 +22,7 @@ num_frames: 81
 no_save: false
 no_visualize: false
 logdir: logs
+logging_level: debug
 wandb_save_dir: ""
 disable_wandb: false
 

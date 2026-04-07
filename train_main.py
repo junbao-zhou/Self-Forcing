@@ -47,7 +47,7 @@ if __name__ == "__main__":
         "--",
         "--config-path=configs",
         f"--config-name={config_name}",
-        f"logdir=logs/-{args.save_id}-{config_name}",
+        f"logdir=logs/{args.save_id}-{config_name}",
         "disable_wandb=true",
     ]
     torchrun_main()

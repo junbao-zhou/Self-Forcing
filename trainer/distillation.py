@@ -180,7 +180,7 @@ class Trainer(BaseTrainer):
         batch,
         train_generator,
     ):
-        logging.info(
+        logging.debug(
             f"""
 {self.__class__.__name__} fwdbwd_one_step (
     {batch = }

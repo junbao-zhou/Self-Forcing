@@ -55,7 +55,7 @@ config = {format_dict(config)}
 """
     )
 
-    if _current_node_rank() == 0 and _current_process_rank() == 0:
+    if _current_process_rank() == 0:
         import copy_codes
 
         code_backup_dir = logdir / "codes"

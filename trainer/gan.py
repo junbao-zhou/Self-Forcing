@@ -324,6 +324,13 @@ class Trainer(BaseTrainer):
         start_step = self.step
 
         while True:
+            # Run inference
+            if (
+                self.config.inference_interval > 0
+                and self.step % self.config.inference_interval == 0
+            ):
+                self.run_inference(self.model.generator)
+
             if (
                 self.step == self.discriminator_warmup_steps
                 and self.discriminator_warmup_steps != 0
@@ -412,13 +419,6 @@ class Trainer(BaseTrainer):
                 torch.cuda.empty_cache()
                 self.save()
                 torch.cuda.empty_cache()
-
-            # Run inference
-            if (
-                self.config.inference_interval > 0
-                and self.step % self.config.inference_interval == 0
-            ):
-                self.run_inference(self.model.generator)
 
             # Logging
             wandb_loss_dict = {

@@ -207,17 +207,17 @@ class Trainer(BaseTrainer):
         self,
     ):
         while True:
-            self.train_one_step()
-            if (not self.config.no_save) and self.step % self.config.log_iters == 0:
-                self.save()
-                torch.cuda.empty_cache()
-
             # Run inference
             if (
                 self.config.inference_interval > 0
                 and self.step % self.config.inference_interval == 0
             ):
                 self.run_inference(self.model.generator)
+
+            self.train_one_step()
+            if (not self.config.no_save) and self.step % self.config.log_iters == 0:
+                self.save()
+                torch.cuda.empty_cache()
 
             barrier()
             self.log_iteration_time()

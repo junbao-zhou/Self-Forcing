@@ -307,6 +307,13 @@ class Trainer(BaseTrainer):
         start_step = self.step
 
         while True:
+            # Run inference
+            if (
+                self.config.inference_interval > 0
+                and self.step % self.config.inference_interval == 0
+            ):
+                self.run_inference(self.model.generator)
+
             TRAIN_GENERATOR = self.step % self.config.dfake_gen_update_ratio == 0
 
             # Train the generator
@@ -350,13 +357,6 @@ class Trainer(BaseTrainer):
                 torch.cuda.empty_cache()
                 self.save()
                 torch.cuda.empty_cache()
-
-            # Run inference
-            if (
-                self.config.inference_interval > 0
-                and self.step % self.config.inference_interval == 0
-            ):
-                self.run_inference(self.model.generator)
 
             # Logging
             if self.is_main_process:

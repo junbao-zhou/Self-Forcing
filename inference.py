@@ -124,13 +124,6 @@ if args.checkpoint_path:
     )
 
 pipeline = pipeline.to(dtype=torch.bfloat16)
-if low_memory:
-    DynamicSwapInstaller.install_model(pipeline.text_encoder, device=gpu)
-else:
-    pipeline.text_encoder.to(device=gpu)
-pipeline.generator.to(device=gpu)
-pipeline.vae.to(device=gpu)
-
 
 # Create dataset
 if args.i2v:

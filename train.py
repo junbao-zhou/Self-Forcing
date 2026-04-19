@@ -24,7 +24,7 @@ from utils.logging import (
 @hydra.main(
     version_base=None,
     config_path="configs",
-    config_name="rolling_forcing_dmd",
+    config_name="self_forcing_dmd",
 )
 def main(
     config: DictConfig,

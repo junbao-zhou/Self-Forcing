@@ -25,19 +25,67 @@ flex_attention = torch.compile(flex_attention, dynamic=False, mode="max-autotune
 
 
 def causal_rope_apply(x, grid_sizes, freqs, start_frame=0):
+    """
+    Apply 3D (frame / height / width) RoPE to a video chunk.
+    Only apply to the first chunk of video.
+    But the input `x` to this function always only contains one chunk of video,
+    so we don't need to pay attention to that in this function.
+
+    Channel layout: the head dimension is split into real and imaginary parts,
+    so c = head_dim // 2.
+    Then the (head_dim // 2) complex channels are split into 3 axis groups:
+        - frame group:  c - 2*(c // 3) channels
+        - height group: c // 3 channels
+        - width group:  c // 3 channels
+    Each group is rotated by the RoPE frequencies of its own axis
+    (broadcast/expanded across the other two axes),
+    then re-concatenated on the channel dim.
+
+    Notes:
+        - `start_frame` lets the frame-axis freqs be indexed with an offset,
+          so successive chunks can use absolute frame positions.
+
+    Inputs:
+        x (torch.Tensor): video chunk, shape (B, L, num_heads, head_dim).
+            head_dim must be even.
+        grid_sizes (torch.LongTensor): shape (B, 3), each row is (F, H, W),
+            the per-sample frame / height / width grid. F*H*W <= L.
+        freqs (torch.Tensor): complex RoPE table from `rope_params`, shape
+            (max_seq_len, head_dim // 2). It is split along the channel dim
+            into the three axis groups.
+        start_frame (int): offset added when indexing the frame-axis freqs;
+            used when this call processes a chunk that is not at frame 0.
+
+    Returns:
+        torch.Tensor: same shape and dtype as `x`,
+            (B, L, num_heads, head_dim), with RoPE applied to the first
+            f*h*w tokens of each sample and the rest copied through.
+    """
     n, c = x.size(2), x.size(3) // 2
+    # n = number of heads, c = dimension per head // 2
 
     # split freqs
     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
+    # freqs[0].shape = [max sequence length, 22]
+    # freqs[1].shape = [max sequence length, 21]
+    # freqs[2].shape = [max sequence length, 21]
 
     # loop over samples
     output = []
 
+    # grid_sizes: [B, 3], the second dimension contains (F, H, W)
     for i, (f, h, w) in enumerate(grid_sizes.tolist()):
         seq_len = f * h * w
 
         # precompute multipliers
+        # x[i, :seq_len].shape = [sequence length, num_heads, dimension per head], x.dtype = torch.float16
         x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2))
+        # x_i.shape = [sequence length, num_heads, dimension per head // 2], x_i.dtype = torch.complex128
+
+        # freqs[0][start_frame : start_frame + f].shape = [number of frames in current video clip, 22]
+        # freqs[0][start_frame : start_frame + f].view(f, 1, 1, -1).expand(f, h, w, -1).shape = [number of frames in current video clip, height, width, 22]
+        # freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1).shape = [number of frames in current video clip, height, width, 21]
+        # freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1).shape = [number of frames in current video clip, height, width, 21]
         freqs_i = torch.cat(
             [
                 freqs[0][start_frame : start_frame + f].view(f, 1, 1, -1).expand(f, h, w, -1),
@@ -46,6 +94,7 @@ def causal_rope_apply(x, grid_sizes, freqs, start_frame=0):
             ],
             dim=-1,
         ).reshape(seq_len, 1, -1)
+        # freqs_i.shape = [sequence length, 1, dimension per head // 2]
 
         # apply rotary embedding
         x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
@@ -104,6 +153,7 @@ class CausalWanSelfAttention(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
             block_mask (BlockMask)
+            current_start (int): the starting index of token of the current chunk. (这是逻辑上的， 不是物理上的， current_start 可以超过 kv cache size)
         """
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
         if cache_start is None:

@@ -146,17 +146,11 @@ class CausalWanSelfAttention(nn.Module):
             )
             kv_cache["k"][:, sink_tokens : sink_tokens + num_rolled_tokens] = kv_cache["k"][
                 :,
-                sink_tokens
-                + num_evicted_tokens : sink_tokens
-                + num_evicted_tokens
-                + num_rolled_tokens,
+                sink_tokens + num_evicted_tokens : kv_cache["local_end_index"].item(),
             ].clone()
             kv_cache["v"][:, sink_tokens : sink_tokens + num_rolled_tokens] = kv_cache["v"][
                 :,
-                sink_tokens
-                + num_evicted_tokens : sink_tokens
-                + num_evicted_tokens
-                + num_rolled_tokens,
+                sink_tokens + num_evicted_tokens : kv_cache["local_end_index"].item(),
             ].clone()
             # Insert the new keys/values at the end
             local_end_index = (

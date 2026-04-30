@@ -1,5 +1,11 @@
 import argparse
 import os
+import time
+
+from utils.logging import (
+    _configure_logging,
+    string_to_logging_level,
+)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
@@ -109,6 +115,15 @@ with initialize(version_base=None, config_path=args.config_dir):
     config = compose(config_name=args.config_name)
 print(f"{config = }")
 
+logdir = Path(args.output_folder)
+logdir.mkdir(parents=True, exist_ok=True)
+
+time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
+_configure_logging(
+    logdir / f"inference-{time_str}.log",
+    logging_level=string_to_logging_level(config.logging_level),
+)
+
 # Initialize pipeline
 if hasattr(config, "denoising_step_list"):
     # Few-step inference
@@ -156,18 +171,6 @@ if local_rank == 0:
 
 if dist.is_initialized():
     dist.barrier()
-
-
-def encode(self, videos: torch.Tensor) -> torch.Tensor:
-    device, dtype = videos[0].device, videos[0].dtype
-    scale = [
-        self.mean.to(device=device, dtype=dtype),
-        1.0 / self.std.to(device=device, dtype=dtype),
-    ]
-    output = [self.model.encode(u.unsqueeze(0), scale).float().squeeze(0) for u in videos]
-
-    output = torch.stack(output, dim=0)
-    return output
 
 
 for i, batch_data in tqdm(enumerate(dataloader), disable=(local_rank != 0)):

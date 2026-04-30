@@ -26,6 +26,27 @@ def sinusoidal_embedding_1d(dim, position):
 
 # @amp.autocast(enabled=False)
 def rope_params(max_seq_len, dim, theta=10000):
+    """Precompute RoPE (Rotary Positional Encoding) frequency table.
+
+    For each position p in [0, max_seq_len) and each channel index
+    i in [0, dim/2), this builds a unit complex number
+        exp(j * p * theta^(-2i/dim))
+    (j is the imaginary unit) which is later multiplied with the
+    (real, imag) pairs of query/key vectors to apply rotary positional
+    embedding.
+
+    Inputs:
+        max_seq_len (int): number of positions to precompute.
+        dim (int): per-axis channel dimension that RoPE will rotate.
+            Must be even; the rotation is applied on dim/2 complex pairs.
+        theta (float): base of the geometric frequency progression
+            (default 10000, same as the original Transformer / RoFormer).
+
+    Returns:
+        freqs (torch.Tensor): complex64 tensor of shape
+            (max_seq_len, dim // 2), where freqs[p, i] = exp(j * p * w_i)
+            with w_i = theta^(-2i/dim). Located on CPU; cast/move as needed.
+    """
     assert dim % 2 == 0
     freqs = torch.outer(
         torch.arange(max_seq_len),

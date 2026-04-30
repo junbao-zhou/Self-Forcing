@@ -61,10 +61,11 @@ class SelfForcingTrainingPipeline:
             if self.last_step_only:
                 indices = torch.ones_like(indices) * (num_denoising_steps - 1)
         else:
-            indices = torch.empty(num_blocks, dtype=torch.long, device=device)
+            indices = torch.zeros(num_blocks, dtype=torch.long, device=device)
 
         dist.broadcast(indices, src=0)  # Broadcast the random indices to all ranks
-        return indices.tolist()
+        result = indices.tolist()
+        return result
 
     def inference_with_trajectory(
         self,

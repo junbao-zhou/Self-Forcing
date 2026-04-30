@@ -178,10 +178,13 @@ class CausalWanSelfAttention(nn.Module):
         ).type_as(v)
 
         current_end = current_start + roped_query.shape[1]
+        # current_end 是逻辑上的， 表示当前 chunk 的 token 在整个视频序列中的结束位置， 可能超过 kv cache size
         sink_tokens = self.sink_size * frame_seqlen
         # If we are using local attention and the current KV cache size is larger than the local attention size, we need to truncate the KV cache
         kv_cache_size = kv_cache["k"].shape[1]
         num_new_tokens = roped_query.shape[1]
+        # kv_cache['local_end_index'] 表示当前 KV cache 中最后一个 token 的位置， 这是物理上的， 不会超过 kv cache size
+        # kv_cache['global_end_index'] 表示当前 KV cache 中最后一个 token 在整个视频序列中的位置， 这是逻辑上的， 可能超过 kv cache size
         if (
             self.local_attn_size != -1
             and (current_end > kv_cache["global_end_index"].item())
@@ -509,6 +512,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         # buffers (don't use register_buffer otherwise dtype will be changed in to())
         assert (dim % num_heads) == 0 and (dim // num_heads) % 2 == 0
         d = dim // num_heads
+        # rope_params returns a [1024, d//2] complex tensor
         self.freqs = torch.cat(
             [
                 rope_params(1024, d - 4 * (d // 6)),
@@ -517,6 +521,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             ],
             dim=1,
         )
+        # self.freqs.shape = [1024, 64]
 
         if model_type == "i2v":
             self.img_emb = MLPProj(1280, dim)

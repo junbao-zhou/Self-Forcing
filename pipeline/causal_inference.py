@@ -1,5 +1,6 @@
 import time
 from typing import List, Optional
+import logging
 import torch
 
 from utils.wan_wrapper import (
@@ -59,7 +60,7 @@ class CausalInferencePipeline(torch.nn.Module):
         self.independent_first_frame = args.independent_first_frame
         self.local_attn_size = self.generator.model.local_attn_size
 
-        print(f"KV inference with {self.num_frame_per_block} frames per block")
+        logging.info(f"KV inference with {self.num_frame_per_block} frames per block")
 
         self.text_encoder.to(device=device)
         self.generator.to(device=device)
@@ -148,7 +149,7 @@ class CausalInferencePipeline(torch.nn.Module):
             if do_not_recompute_initial_latents:
                 pass
             else:
-                print(f"Resetting caches")
+                logging.info(f"Resetting caches")
                 self._reset_crossattn_cache()
                 self._reset_kv_cache()
 
@@ -164,7 +165,7 @@ class CausalInferencePipeline(torch.nn.Module):
                 if do_not_recompute_initial_latents:
                     pass
                 else:
-                    print(f"Recompute KV cache based on Initial Latents")
+                    logging.info(f"Recompute KV cache based on Initial Latents")
                     self.generator(
                         noisy_image_or_video=initial_latent[:, :1],
                         conditional_dict=conditional_dict,
@@ -191,7 +192,7 @@ class CausalInferencePipeline(torch.nn.Module):
                 if do_not_recompute_initial_latents:
                     pass
                 else:
-                    print(f"Recompute KV cache based on Initial Latents")
+                    logging.info(f"Recompute KV cache based on Initial Latents")
                     self.generator(
                         noisy_image_or_video=current_ref_latents,
                         conditional_dict=conditional_dict,
@@ -225,7 +226,7 @@ class CausalInferencePipeline(torch.nn.Module):
 
             # Step 3.1: Spatial denoising loop
             for index, current_timestep in enumerate(self.denoising_step_list):
-                print(f"current_timestep: {current_timestep}")
+                logging.info(f"current_timestep: {current_timestep}")
                 # set current timestep
                 timestep = (
                     torch.ones(
@@ -306,7 +307,7 @@ class CausalInferencePipeline(torch.nn.Module):
             start_decode_time = time.time()
             video = self.vae.decode_to_pixel(output, use_cache=False)
             video = (video * 0.5 + 0.5).clamp(0, 1)
-            print(
+            logging.info(
                 f"VAE decode time: {time.time() - start_decode_time:.2f} seconds"
             )
 
@@ -317,19 +318,19 @@ class CausalInferencePipeline(torch.nn.Module):
             vae_time = vae_start.elapsed_time(vae_end)
             total_time = init_time + diffusion_time + vae_time
 
-            print("Profiling results:")
-            print(
+            logging.info("Profiling results:")
+            logging.info(
                 f"  - Initialization/caching time: {init_time:.2f} ms ({100 * init_time / total_time:.2f}%)"
             )
-            print(
+            logging.info(
                 f"  - Diffusion generation time: {diffusion_time:.2f} ms ({100 * diffusion_time / total_time:.2f}%)"
             )
             for i, block_time in enumerate(block_times):
-                print(
+                logging.info(
                     f"    - Block {i} generation time: {block_time:.2f} ms ({100 * block_time / diffusion_time:.2f}% of diffusion)"
                 )
-            print(f"  - VAE decoding time: {vae_time:.2f} ms ({100 * vae_time / total_time:.2f}%)")
-            print(f"  - Total time: {total_time:.2f} ms")
+            logging.info(f"  - VAE decoding time: {vae_time:.2f} ms ({100 * vae_time / total_time:.2f}%)")
+            logging.info(f"  - Total time: {total_time:.2f} ms")
 
         return_values = []
         if not do_not_decode_video:
@@ -353,7 +354,7 @@ class CausalInferencePipeline(torch.nn.Module):
         """
         Initialize a Per-GPU KV cache for the Wan model.
         """
-        print(
+        logging.info(
             f"""
 {type(self).__name__}._initialize_kv_cache
     {batch_size = }
@@ -363,13 +364,13 @@ class CausalInferencePipeline(torch.nn.Module):
         )
         kv_cache1 = []
         if self.local_attn_size != -1:
-            print(f"use {self.local_attn_size = }")
+            logging.info(f"use {self.local_attn_size = }")
             # Use the local attention size to compute the KV cache size
             kv_cache_size = self.local_attn_size * self.frame_seq_length
         else:
             # Use the default KV cache size
             kv_cache_size = 32760
-        print(f"{kv_cache_size = }")
+        logging.info(f"{kv_cache_size = }")
 
         for _ in range(self.num_transformer_blocks):
             kv_cache1.append(
@@ -400,7 +401,7 @@ class CausalInferencePipeline(torch.nn.Module):
         """
         Initialize a Per-GPU cross-attention cache for the Wan model.
         """
-        print(
+        logging.info(
             f"""
 {type(self).__name__}._initialize_crossattn_cache
     {batch_size = }
@@ -422,13 +423,13 @@ class CausalInferencePipeline(torch.nn.Module):
 
     def _reset_crossattn_cache(self):
         # reset cross attn cache
-        print(f"{type(self).__name__}._reset_crossattn_cache")
+        logging.info(f"{type(self).__name__}._reset_crossattn_cache")
         for block_index in range(self.num_transformer_blocks):
             self.crossattn_cache[block_index]["is_init"] = False
 
     def _reset_kv_cache(self):
         # reset kv cache
-        print(f"{type(self).__name__}._reset_kv_cache")
+        logging.info(f"{type(self).__name__}._reset_kv_cache")
         for block_index in range(len(self.kv_cache1)):
             self.kv_cache1[block_index]["global_end_index"] = torch.tensor(
                 [0],

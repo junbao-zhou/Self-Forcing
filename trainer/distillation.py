@@ -202,6 +202,8 @@ class Trainer(BaseTrainer):
         else:
             clean_latent = None
             image_latent = None
+        logging.debug(f"{clean_latent is None = }")
+        logging.debug(f"{image_latent is None = }")
 
         batch_size = len(text_prompts)
         image_or_video_shape = list(self.config.image_or_video_shape)
@@ -222,6 +224,7 @@ class Trainer(BaseTrainer):
 
         # Step 3: Store gradients for the generator (if training the generator)
         if train_generator:
+            logging.debug(f"Training generator")
             generator_loss, generator_log_dict = self.model.generator_loss(
                 image_or_video_shape=image_or_video_shape,
                 conditional_dict=conditional_dict,
@@ -243,6 +246,7 @@ class Trainer(BaseTrainer):
             return generator_log_dict
         else:
             generator_log_dict = {}
+            logging.debug(f"Not training generator")
 
         # Step 4: Store gradients for the critic (if training the critic)
         critic_loss, critic_log_dict = self.model.critic_loss(

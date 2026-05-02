@@ -56,6 +56,8 @@ sys.argv.extend(
         "--use_ema",
         "--seed",
         f"{seed}",
+        "--max_video_num",
+        "20",
     ]
 )
 print(f"{sys.argv = }")
@@ -86,6 +88,12 @@ parser.add_argument(
     type=int,
     default=1,
     help="Number of samples to generate per prompt",
+)
+parser.add_argument(
+    "--max_video_num",
+    type=int,
+    default=-1,
+    help="Maximum number of videos to generate (for debugging, -1 for no limit)",
 )
 args = parser.parse_args()
 
@@ -175,6 +183,8 @@ if dist.is_initialized():
 
 for i, batch_data in tqdm(enumerate(dataloader), disable=(local_rank != 0)):
     idx = batch_data["idx"].item()
+    if args.max_video_num != -1 and idx >= args.max_video_num:
+        break
 
     # For DataLoader batch_size=1, the batch_data is already a single item, but in a batch container
     # Unpack the batch data for convenience

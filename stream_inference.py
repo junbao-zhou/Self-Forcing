@@ -90,9 +90,8 @@ class StreamInferenceWrapper:
 
         print(
             f"""
-{self.__class__.__name__}.__init__():
     {self.initial_noise.shape = }
-{self.stream_model_config = }
+    {self.stream_model_config = }
 """
         )
 
@@ -152,7 +151,7 @@ class StreamInferenceWrapper:
             self.pipeline.vae.to(device="cpu")
         video = (video * 0.5 + 0.5).clamp(0, 1)
         print(
-            f"{self.__class__.__name__}.decode_to_pixel() VAE decode time: {time.time() - start_decode_time:.2f} seconds"
+            f"VAE decode time: {time.time() - start_decode_time:.2f} seconds"
         )
         return video
 
@@ -203,7 +202,6 @@ class StreamInferenceWrapper:
         assert end_block_index > start_block_index
         print(
             f"""
-{self.__class__.__name__}.inference():
     {start_block_index = }  |  {end_block_index = }
 """
         )

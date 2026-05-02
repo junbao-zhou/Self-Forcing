@@ -25,7 +25,7 @@ def build_arg_parser():
     parser.add_argument(
         "--machine_num",
         type=int,
-        default=8,
+        default=1,
         help="Number of machines to use for distributed training",
     )
     return parser

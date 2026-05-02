@@ -1,3 +1,4 @@
+import logging
 import types
 from typing import List, Optional
 import torch
@@ -177,6 +178,15 @@ class WanDiffusionWrapper(torch.nn.Module):
         local_attn_size=-1,
         sink_size=0,
     ):
+        logging.debug(
+            f"""
+    {model_name = },
+    {timestep_shift = },
+    {is_causal = },
+    {local_attn_size = },
+    {sink_size = },
+"""
+        )
         super().__init__()
 
         if is_causal:
@@ -299,6 +309,21 @@ class WanDiffusionWrapper(torch.nn.Module):
         aug_t: Optional[torch.Tensor] = None,
         cache_start: Optional[int] = None,
     ) -> torch.Tensor:
+        logging.debug(
+            f"""
+    {noisy_image_or_video.shape = },
+    {conditional_dict.keys() = },
+    {timestep = },
+    kv_cache = {None if kv_cache is None else len(kv_cache)},
+    crossattn_cache = {None if crossattn_cache is None else len(crossattn_cache)},
+    {current_start = },
+    {classify_mode = },
+    {concat_time_embeddings = },
+    clean_x = {None if clean_x is None else clean_x.shape},
+    aug_t = {None if aug_t is None else aug_t.shape},
+    {cache_start = },
+"""
+        )
         prompt_embeds = conditional_dict["prompt_embeds"]
 
         # [B, F] -> [B]

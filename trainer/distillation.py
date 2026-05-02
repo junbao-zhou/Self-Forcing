@@ -182,10 +182,8 @@ class Trainer(BaseTrainer):
     ):
         logging.debug(
             f"""
-{self.__class__.__name__} fwdbwd_one_step (
     {batch = }
     {train_generator = }
-)
 """
         )
         self.model.eval()  # prevent any randomness (e.g. dropout)

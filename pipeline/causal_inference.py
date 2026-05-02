@@ -307,7 +307,7 @@ class CausalInferencePipeline(torch.nn.Module):
             video = self.vae.decode_to_pixel(output, use_cache=False)
             video = (video * 0.5 + 0.5).clamp(0, 1)
             print(
-                f"{self.__class__.__name__}.inference() VAE decode time: {time.time() - start_decode_time:.2f} seconds"
+                f"VAE decode time: {time.time() - start_decode_time:.2f} seconds"
             )
 
         if profile:

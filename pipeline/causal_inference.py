@@ -356,7 +356,6 @@ class CausalInferencePipeline(torch.nn.Module):
         """
         logging.info(
             f"""
-{type(self).__name__}._initialize_kv_cache
     {batch_size = }
     {dtype = }
     {device = }
@@ -403,7 +402,6 @@ class CausalInferencePipeline(torch.nn.Module):
         """
         logging.info(
             f"""
-{type(self).__name__}._initialize_crossattn_cache
     {batch_size = }
     {dtype = }
     {device = }
@@ -423,13 +421,13 @@ class CausalInferencePipeline(torch.nn.Module):
 
     def _reset_crossattn_cache(self):
         # reset cross attn cache
-        logging.info(f"{type(self).__name__}._reset_crossattn_cache")
+        logging.info(f"")
         for block_index in range(self.num_transformer_blocks):
             self.crossattn_cache[block_index]["is_init"] = False
 
     def _reset_kv_cache(self):
         # reset kv cache
-        logging.info(f"{type(self).__name__}._reset_kv_cache")
+        logging.info(f"")
         for block_index in range(len(self.kv_cache1)):
             self.kv_cache1[block_index]["global_end_index"] = torch.tensor(
                 [0],

@@ -20,6 +20,9 @@ from utils.logging import (
     string_to_logging_level,
 )
 
+import torch
+torch.set_printoptions(linewidth=500)
+
 
 @hydra.main(
     version_base=None,

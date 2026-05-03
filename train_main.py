@@ -2,6 +2,7 @@ import os
 
 os.environ["NCCL_DEBUG"] = "WARN"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 gpu_num = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
@@ -10,7 +11,6 @@ MASTER_PORT = os.environ.get("MASTER_PORT", "29500")
 print(f"{MASTER_ADDR = }, {MASTER_PORT = }")
 
 import sys
-import time
 from torch.distributed.run import main as torchrun_main
 import argparse
 

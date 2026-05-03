@@ -840,6 +840,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
+        logging.debug(
+            f""""""
+        )
 
         if self.model_type == "i2v":
             assert clip_fea is not None and y is not None
@@ -901,6 +904,12 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             return custom_forward
 
         for block_index, block in enumerate(self.blocks):
+            if block_index != 0:
+                # every block emits the same per-step debug lines; silence
+                # DEBUG/INFO for non-first blocks to avoid flooding logs.
+                # Keep WARNING+ enabled so exceptions / `logging.exception`
+                # still surface if the block forward throws.
+                logging.disable(logging.INFO)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 kwargs.update(
                     {
@@ -925,6 +934,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                     }
                 )
                 x = block(x, **kwargs)
+            if block_index != 0:
+                logging.disable(logging.NOTSET)
 
         # head
         x = self.head(x, e.unflatten(dim=0, sizes=t.shape).unsqueeze(2))
@@ -964,6 +975,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
+        logging.debug(
+            f""""""
+        )
         if self.model_type == "i2v":
             assert clip_fea is not None and y is not None
         # params
@@ -1096,6 +1110,12 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             return custom_forward
 
         for block in self.blocks:
+            if block is not self.blocks[0]:
+                # every block emits the same per-step debug lines; silence
+                # DEBUG/INFO for non-first blocks to avoid flooding logs.
+                # Keep WARNING+ enabled so exceptions / `logging.exception`
+                # still surface if the block forward throws.
+                logging.disable(logging.INFO)
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 x = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
@@ -1105,6 +1125,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 )
             else:
                 x = block(x, **kwargs)
+            if block is not self.blocks[0]:
+                logging.disable(logging.NOTSET)
 
         if clean_x is not None:
             x = x[:, x.shape[1] // 2 :]
@@ -1117,6 +1139,9 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         return torch.stack(x)
 
     def forward(self, *args, **kwargs):
+        logging.debug(
+            f""""""
+        )
         if kwargs.get("kv_cache", None) is not None:
             return self._forward_inference(*args, **kwargs)
         else:

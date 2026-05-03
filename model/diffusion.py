@@ -1,23 +1,37 @@
+import logging
 from typing import Tuple
 import torch
+import torch.nn.functional as F
 
-from model.base import BaseModel
+from model.base import SelfForcingModel
+from pipeline import SelfForcingTrainingPipeline
 from utils.wan_wrapper import WanDiffusionWrapper, WanTextEncoder, WanVAEWrapper
 
 
-class CausalDiffusion(BaseModel):
+class CausalDiffusion(SelfForcingModel):
+    """
+    Self-forcing diffusion training without distillation.
+
+    Like DMD, the student is rolled out auto-regressively via `_run_generator`
+    (KV cache + exit_flag), so train and test see the same input distribution.
+    Unlike DMD, there is no real_score / fake_score / KL gradient — the x0
+    estimates produced by the rollout are supervised directly with MSE against
+    the dataset's ground-truth clean latent.
+    """
+
     def __init__(
         self,
         args,
         device,
     ):
-        """
-        Initialize the Diffusion loss module.
-        """
         super().__init__(args, device)
         self.num_frame_per_block = getattr(args, "num_frame_per_block", 1)
+        self.same_step_across_blocks = getattr(args, "same_step_across_blocks", True)
+        self.num_training_frames = getattr(args, "num_training_frames", 21)
+
         if self.num_frame_per_block > 1:
             self.generator.model.num_frame_per_block = self.num_frame_per_block
+
         self.independent_first_frame = getattr(args, "independent_first_frame", False)
         if self.independent_first_frame:
             self.generator.model.independent_first_frame = True
@@ -25,17 +39,15 @@ class CausalDiffusion(BaseModel):
         if args.gradient_checkpointing:
             self.generator.enable_gradient_checkpointing()
 
-        # Step 2: Initialize all hyperparameters
-        self.num_train_timestep = args.num_train_timestep
-        self.min_step = int(0.02 * self.num_train_timestep)
-        self.max_step = int(0.98 * self.num_train_timestep)
-        self.guidance_scale = args.guidance_scale
-        self.timestep_shift = getattr(args, "timestep_shift", 1.0)
-        self.teacher_forcing = getattr(args, "teacher_forcing", False)
-        # Noise augmentation in teacher forcing, we add small noise to clean context latents
-        self.noise_augmentation_max_timestep = getattr(args, "noise_augmentation_max_timestep", 0)
+        # Lazily built once FSDP-wrapped modules are passed in by the trainer.
+        self.inference_pipeline: SelfForcingTrainingPipeline = None
 
-    def _initialize_models(self, args):
+        self.num_train_timestep = args.num_train_timestep
+        self.timestep_shift = getattr(args, "timestep_shift", 1.0)
+
+    def _initialize_models(self, args, device):
+        # Override SelfForcingModel/BaseModel to skip real_score and fake_score:
+        # this trainer has no distillation, so those modules would just waste memory.
         self.generator = WanDiffusionWrapper(
             **getattr(args, "model_kwargs", {}),
             is_causal=True,
@@ -48,6 +60,9 @@ class CausalDiffusion(BaseModel):
         self.vae = WanVAEWrapper()
         self.vae.requires_grad_(False)
 
+        self.scheduler = self.generator.get_scheduler()
+        self.scheduler.timesteps = self.scheduler.timesteps.to(device)
+
     def generator_loss(
         self,
         image_or_video_shape,
@@ -57,75 +72,45 @@ class CausalDiffusion(BaseModel):
         initial_latent: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, dict]:
         """
-        Generate image/videos from noise and compute the DMD loss.
-        The noisy input to the generator is backward simulated.
-        This removes the need of any datasets during distillation.
-        See Sec 4.5 of the DMD2 paper (https://arxiv.org/abs/2405.14867) for details.
+        Self-forcing rollout + MSE supervision against the ground-truth clean latent.
+
         Input:
-            - image_or_video_shape: a list containing the shape of the image or video [B, F, C, H, W].
-            - conditional_dict: a dictionary containing the conditional information (e.g. text embeddings, image embeddings).
-            - unconditional_dict: a dictionary containing the unconditional information (e.g. null/negative text embeddings, null/negative image embeddings).
-            - clean_latent: a tensor containing the clean latents [B, F, C, H, W]. Need to be passed when no backward simulation is used.
-        Output:
-            - loss: a scalar tensor representing the generator loss.
-            - generator_log_dict: a dictionary containing the intermediate tensors for logging.
+            - image_or_video_shape: [B, F, C, H, W].
+            - conditional_dict: text-encoder outputs (and optional initial_latent for i2v).
+            - unconditional_dict: kept for API compatibility; unused here.
+            - clean_latent: dataset ground-truth latent, shape [B, F, C, H, W].
+            - initial_latent: i2v image latent; ignored when args.i2v is False.
         """
-        noise = torch.randn_like(clean_latent)
-        batch_size, num_frame = image_or_video_shape[:2]
-
-        # Step 2: Randomly sample a timestep and add noise to denoiser inputs
-        index = self._get_timestep(
-            0,
-            self.scheduler.num_train_timesteps,
-            image_or_video_shape[0],
-            image_or_video_shape[1],
-            self.num_frame_per_block,
-            uniform_timestep=False,
+        logging.debug(
+            f"""
+    {image_or_video_shape = },
+    {conditional_dict.keys() = },
+    {clean_latent.shape = },
+    initial_latent={None if initial_latent is None else initial_latent.shape},
+"""
         )
-        timestep = self.scheduler.timesteps[index].to(dtype=self.dtype, device=self.device)
-        noisy_latents = self.scheduler.add_noise(
-            clean_latent.flatten(0, 1),
-            noise.flatten(0, 1),
-            timestep.flatten(0, 1),
-        ).unflatten(0, (batch_size, num_frame))
-        training_target = self.scheduler.training_target(clean_latent, noise, timestep)
 
-        # Step 3: Noise augmentation, also add small noise to clean context latents
-        if self.noise_augmentation_max_timestep > 0:
-            index_clean_aug = self._get_timestep(
-                0,
-                self.noise_augmentation_max_timestep,
-                image_or_video_shape[0],
-                image_or_video_shape[1],
-                self.num_frame_per_block,
-                uniform_timestep=False,
-            )
-            timestep_clean_aug = self.scheduler.timesteps[index_clean_aug].to(
-                dtype=self.dtype, device=self.device
-            )
-            clean_latent_aug = self.scheduler.add_noise(
-                clean_latent.flatten(0, 1),
-                noise.flatten(0, 1),
-                timestep_clean_aug.flatten(0, 1),
-            ).unflatten(0, (batch_size, num_frame))
-        else:
-            clean_latent_aug = clean_latent
-            timestep_clean_aug = None
-
-        # Compute loss
-        flow_pred, x0_pred = self.generator(
-            noisy_image_or_video=noisy_latents,
+        # Step 1: self-forcing auto-regressive rollout. pred_image stacks per-block
+        # x0 estimates taken at the (rank-synced) exit_flag denoising step.
+        pred_image, gradient_mask, _, _ = self._run_generator(
+            image_or_video_shape=image_or_video_shape,
             conditional_dict=conditional_dict,
-            timestep=timestep,
-            clean_x=clean_latent_aug if self.teacher_forcing else None,
-            aug_t=timestep_clean_aug if self.teacher_forcing else None,
+            initial_latent=initial_latent if self.args.i2v else None,
         )
-        # loss = torch.nn.functional.mse_loss(flow_pred.float(), training_target.float())
-        loss = torch.nn.functional.mse_loss(
-            flow_pred.float(), training_target.float(), reduction="none"
-        ).mean(dim=(2, 3, 4))
-        loss = loss * self.scheduler.training_weight(timestep).unflatten(0, (batch_size, num_frame))
-        loss = loss.mean()
+        logging.debug(
+            f"_run_generator -> {pred_image.shape = }, {gradient_mask is None = }"
+        )
 
-        log_dict = {"x0": clean_latent.detach(), "x0_pred": x0_pred.detach()}
+        # Step 2: direct MSE in x0 space against the dataset latent.
+        pred_image_f = pred_image.float()
+        clean_latent_f = clean_latent.float()
+        if gradient_mask is not None:
+            loss = F.mse_loss(pred_image_f[gradient_mask], clean_latent_f[gradient_mask])
+        else:
+            loss = F.mse_loss(pred_image_f, clean_latent_f)
+
+        log_dict = {
+            "x0": clean_latent.detach(),
+            "x0_pred": pred_image.detach(),
+        }
         return loss, log_dict

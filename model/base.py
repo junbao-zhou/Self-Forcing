@@ -1,3 +1,4 @@
+import logging
 from typing import Tuple
 from einops import rearrange
 from torch import nn
@@ -133,6 +134,11 @@ class SelfForcingModel(BaseModel):
             - pred_image: a tensor with shape [B, F, C, H, W].
             - denoised_timestep: an integer
         """
+        logging.debug(f"""
+    {image_or_video_shape=},
+    {conditional_dict.keys()=},
+    initial_latent={None if initial_latent is None else initial_latent.shape},
+""")
         # Step 1: Sample noise and backward simulate the generator's input
         assert getattr(
             self.args, "backward_simulation", True
@@ -230,6 +236,10 @@ class SelfForcingModel(BaseModel):
             T is the total number of timesteps. output[0] is a pure noise and output[i] and i>0
             represents the x0 prediction at each timestep.
         """
+        logging.debug(f"""
+    {noise.shape = },
+    {conditional_dict.keys() = },
+""")
         if self.inference_pipeline is None:
             self._initialize_inference_pipeline()
 

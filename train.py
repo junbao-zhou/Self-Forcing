@@ -76,15 +76,24 @@ config = {format_dict(config)}
         )
         logging.info(f"Code backup saved to {code_backup_dir}")
 
-    if config.trainer == "diffusion":
-        trainer = DiffusionTrainer(config)
-    elif config.trainer == "gan":
-        trainer = GANTrainer(config)
-    elif config.trainer == "ode":
-        trainer = ODETrainer(config)
-    elif config.trainer == "score_distillation":
-        trainer = ScoreDistillationTrainer(config)
-    trainer.train()
+    try:
+        if config.trainer == "diffusion":
+            trainer = DiffusionTrainer(config)
+        elif config.trainer == "gan":
+            trainer = GANTrainer(config)
+        elif config.trainer == "ode":
+            trainer = ODETrainer(config)
+        elif config.trainer == "score_distillation":
+            trainer = ScoreDistillationTrainer(config)
+        trainer.train()
+    except BaseException:
+        # Hydra catches exceptions in @hydra.main and prints to stderr only.
+        # Re-route the traceback through logging so it lands in the per-rank log file.
+        # Defensively clear any leaked logging.disable state from inner code paths
+        # so the traceback isn't silently swallowed.
+        logging.disable(logging.NOTSET)
+        logging.exception("Training failed with uncaught exception")
+        raise
 
 
 if __name__ == "__main__":

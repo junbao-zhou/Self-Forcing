@@ -1,7 +1,7 @@
 import logging
 
 from model import CausalDiffusion
-from utils.dataset import ShardingLMDBDataset, cycle
+from utils.dataset import OpenVidDataset, OpenVidLatentDataset, cycle
 import torch.distributed as dist
 from omegaconf import OmegaConf
 import torch
@@ -67,7 +67,16 @@ class Trainer(BaseTrainer):
         )
 
         # Step 3: Initialize the dataloader
-        dataset = ShardingLMDBDataset(config.data_path, max_pair=int(1e8))
+        if config.load_raw_video:
+            latent_frames = config.image_or_video_shape[1]
+            video_frames = (latent_frames - 1) * 4 + 1
+            dataset = OpenVidDataset(
+                video_folder=config.video_folder,
+                csv_path=config.csv_path,
+                num_frames=video_frames,
+            )
+        else:
+            dataset = OpenVidLatentDataset(config.latent_folder)
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset, shuffle=True, drop_last=True
         )
@@ -143,6 +152,7 @@ class Trainer(BaseTrainer):
     ):
         logging.debug(
             f"""
+    {self.step = }
     {batch.keys() = }
 """
         )
@@ -197,12 +207,30 @@ class Trainer(BaseTrainer):
             initial_latent=image_latent,
         )
         self.generator_optimizer.zero_grad()
+        # Silence DEBUG/INFO logs during backward: gradient checkpointing reruns
+        # each transformer block under autograd, which bypasses the outer
+        # for-loop's logging.disable wrapping in CausalWanModel and floods the log.
+        # Disable up to INFO only (not CRITICAL) so WARNING/ERROR/CRITICAL still
+        # get through — important for `logging.exception` if backward throws OOM.
+        prev_disable = logging.root.manager.disable
+        logging.disable(logging.INFO)
         generator_loss.backward()
+        logging.disable(prev_disable)
         generator_grad_norm = self.model.generator.clip_grad_norm_(self.max_grad_norm)
         self.generator_optimizer.step()
+        if self.generator_ema is not None:
+            self.generator_ema.update(self.model.generator)
 
         # Increment the step since we finished gradient update
         self.step += 1
+
+        # Create EMA params (if not already created)
+        if (
+            (self.step >= self.config.ema_start_step)
+            and (self.generator_ema is None)
+            and (self.config.ema_weight > 0)
+        ):
+            self.generator_ema = EMA_FSDP(self.model.generator, decay=self.config.ema_weight)
 
         wandb_loss_dict = {
             "generator_loss": generator_loss.item(),
@@ -212,9 +240,6 @@ class Trainer(BaseTrainer):
         # Step 4: Logging
         self.log_metrics(wandb_loss_dict)
         self.maybe_run_gc()
-
-        # Step 5. Create EMA params
-        # TODO: Implement EMA
 
     def generate_video(
         self,
@@ -239,6 +264,7 @@ class Trainer(BaseTrainer):
                 self.config.inference_interval > 0
                 and self.step % self.config.inference_interval == 0
             ):
+                torch.cuda.empty_cache()
                 self.run_inference(self.model.generator)
 
             batch = next(self.dataloader)

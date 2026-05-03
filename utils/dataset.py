@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 from PIL import Image
 import os
+import csv
+import cv2
+import logging
 
 
 class TextDataset(Dataset):
@@ -233,6 +236,117 @@ class TextImagePairDataset(Dataset):
             "type": item["type"],
             "origin_size": (item["origin_width"], item["origin_height"]),
             "idx": idx,
+        }
+
+
+class OpenVidDataset(Dataset):
+    def __init__(
+        self,
+        video_folder: str,
+        csv_path: str,
+        num_frames: int = 81,
+        height: int = 480,
+        width: int = 832,
+    ):
+        logging.debug(
+            f"""
+    {video_folder = },
+    {csv_path = },
+    {num_frames = },
+    {height = },
+    {width = },
+"""
+        )
+        self.video_folder = video_folder
+        self.num_frames = num_frames
+        self.height = height
+        self.width = width
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            self.samples = [
+                (row["video"], row["caption"], int(row["frame"]))
+                for row in reader
+                if int(row["frame"]) >= num_frames
+                and os.path.exists(os.path.join(video_folder, row["video"]))
+            ]
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> dict:
+        video_filename, caption, total_frames = self.samples[idx]
+        video_path = os.path.join(self.video_folder, video_filename)
+
+        cap = cv2.VideoCapture(video_path)
+        start = np.random.randint(0, total_frames - self.num_frames + 1)
+        indices = range(start, start + self.num_frames)
+
+        frames = []
+        for frame_index in indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
+            ret, frame = cap.read()
+            if not ret:
+                frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            else:
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame = cv2.resize(frame, (self.width, self.height))
+            frames.append(frame)
+        cap.release()
+
+        # [F, H, W, C] -> [C, F, H, W], normalized to [-1, 1]
+        frames_array = np.stack(frames, axis=0).astype(np.float32) / 127.5 - 1.0
+        frames_tensor = torch.from_numpy(frames_array).permute(3, 0, 1, 2)
+
+        return {
+            "frames": frames_tensor,  # [C, F, H, W]
+            "prompts": caption,
+        }
+
+
+class OpenVidLatentDataset(Dataset):
+    """
+    Dataset of OpenVid VAE latents pre-computed by compute_vae_latent.py.
+
+    Each .pt file stores a dict {"latent": Tensor[1, F, C, H, W], "caption": str}.
+    Returned `ode_latent` keeps the leading singleton step dim so it is a
+    drop-in replacement for `ShardingLMDBDataset` in the trainer
+    (which indexes `ode_latent[:, -1]` to get the clean latent).
+    """
+
+    def __init__(
+        self,
+        latent_folder: str,
+        max_pair: int = int(1e8),
+    ):
+        logging.debug(
+            f"""
+    {latent_folder = },
+    {max_pair = },
+"""
+        )
+        self.latent_folder = latent_folder
+        self.latent_files = sorted(
+            entry.name
+            for entry in os.scandir(latent_folder)
+            if entry.name.endswith(".pt")
+        )
+        self.latent_files = self.latent_files[:max_pair]
+
+    def __len__(self):
+        return len(self.latent_files)
+
+    def __getitem__(self, idx: int) -> dict:
+        path = os.path.join(self.latent_folder, self.latent_files[idx])
+        data = torch.load(path, map_location="cpu", weights_only=False)
+        latent = data["latent"]
+        if not torch.is_tensor(latent):
+            latent = torch.tensor(latent)
+        # File stores [1, F, C, H, W]; treat the leading 1 as the denoising-step dim
+        # so downstream code that does `ode_latent[:, -1]` still works.
+        return {
+            "prompts": data["caption"],
+            "ode_latent": latent.to(torch.float32),
         }
 
 

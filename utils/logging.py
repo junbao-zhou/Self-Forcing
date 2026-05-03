@@ -67,6 +67,44 @@ def _add_extra_fields_to_record():
     logging.setLogRecordFactory(record_factory)
 
 
+def _install_excepthooks():
+    """
+    Route uncaught exceptions through the logging system so the traceback
+    lands in the per-rank log file (and stderr handler), not just on stderr
+    where torchrun may swallow it.
+    """
+    def _log_uncaught(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            # Keep Ctrl-C behavior: don't spam logs, fall back to default.
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        logging.critical(
+            "Uncaught exception",
+            exc_info=(exc_type, exc_value, exc_tb),
+        )
+
+    sys.excepthook = _log_uncaught
+
+    # Python 3.8+: threading exceptions
+    import threading
+    def _log_thread_exc(args):
+        if issubclass(args.exc_type, SystemExit):
+            return
+        logging.critical(
+            f"Uncaught exception in thread {args.thread.name}",
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+    threading.excepthook = _log_thread_exc
+
+    # Unraisable exceptions (e.g. errors in __del__, weakref callbacks)
+    def _log_unraisable(unraisable):
+        logging.error(
+            f"Unraisable exception: {unraisable.err_msg or ''}",
+            exc_info=(unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback),
+        )
+    sys.unraisablehook = _log_unraisable
+
+
 def _configure_logging(
     logfile: Path | str,
     logging_level=logging.INFO,
@@ -93,6 +131,8 @@ def _configure_logging(
     root = logging.getLogger()
     root.setLevel(logging_level)
     root.handlers[:] = [file_handler, stream_handler]
+
+    _install_excepthooks()
 
 
 def string_to_logging_level(

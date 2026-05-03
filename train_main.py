@@ -40,7 +40,7 @@ if __name__ == "__main__":
         "torchrun",
         f"--nnodes={args.machine_num}",
         f"--nproc_per_node={gpu_num}",
-        "--rdzv_id=5235",
+        f"--rdzv_id={args.save_id}",
         "--rdzv_backend=c10d",
         f"--rdzv_endpoint={MASTER_ADDR}:{MASTER_PORT}",
         "train.py",

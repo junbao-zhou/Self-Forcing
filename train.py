@@ -1,3 +1,4 @@
+import os
 import time
 import hydra
 from hydra.core.hydra_config import HydraConfig
@@ -53,6 +54,7 @@ def main(
 
     logging.info(
         f"""
+[env check] PYTORCH_CUDA_ALLOC_CONF={os.environ.get('PYTORCH_CUDA_ALLOC_CONF')}, NCCL_DEBUG={os.environ.get('NCCL_DEBUG')}, RANK={os.environ.get('RANK')}, LOCAL_RANK={os.environ.get('LOCAL_RANK')}
 {config_name = }
 config = {format_dict(config)}
 """

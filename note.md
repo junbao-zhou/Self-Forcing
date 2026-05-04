@@ -466,7 +466,7 @@ H800 80 GB，已用 78.52 GB，PyTorch 实际占 62.67 GB，**reserved-but-unall
 
 环境变量设置成功， 看来还是不能 batch size > 1 .
 
-## 改动：KV cache 懒加载 + 原地 reset（未验证）
+## 改动：KV cache 懒加载 + 原地 reset
 
 `pipeline/self_forcing_training.py`：
 
@@ -478,6 +478,8 @@ H800 80 GB，已用 78.52 GB，PyTorch 实际占 62.67 GB，**reserved-but-unall
    - `crossattn_cache` 重置 `is_init=False`，让模型下一步根据新 prompt 重新填充
 
 预期效果：减少每步 12 GB 的 alloc/free churn，缓解碎片。
+
+结果： 还是 CUDA Out of Memory， 并且在 inference 的时候 CUDA Out of Memory。 说明 inference 的时候加载的 `CausalInferencePipeline` 非常吃显存。
 
 ## KV cache 复用时的 leaf / grad_fn 陷阱（也是原作者注释掉懒加载的根因）
 
@@ -523,3 +525,35 @@ backward 跑完之后，autograd 引擎释放了图里 saved-for-backward 的中
 - `is_leaf` 复位 True
 
 之后再调 `requires_grad_(False)`、清 `.grad`、`zero_()` 都合法，buffer 也得以复用。
+
+## inference 时显存压顶 + gc.collect 配对（实测有效）
+
+### 改动
+
+1. **训练 pipeline 在 inference 前释放**（`trainer/diffusion.py` train 循环）：
+   ```python
+   self.model.inference_pipeline = None
+   gc.collect()
+   torch.cuda.empty_cache()
+   self.run_inference(...)
+   gc.collect()
+   torch.cuda.empty_cache()
+   ```
+   理由：`run_inference` 在 rank 0 上构造 `CausalInferencePipeline`（自带 ~12 GB KV cache）。如果训练 pipeline 的 12 GB KV cache 还在，rank 0 上两份 KV cache 同时占用 → OOM（note 早期记录的"中途 inference 时 OOM"就是这个）。下一步训练靠懒加载重建训练 pipeline。
+
+2. **`CausalInferencePipeline` 加 `vae_offload_cpu` 选项**（仿 `stream_inference.py`）：
+   - 平时 VAE 在 CPU
+   - decode 前 `gc.collect + empty_cache`，再 `vae.to(device)`
+   - decode 后立刻 `vae.to("cpu") + gc.collect + empty_cache`
+   - `default_config.yaml` 默认 `vae_offload_cpu: true`
+
+3. **`gc.collect()` 与 `torch.cuda.empty_cache()` 全代码库配对**：
+   - `gc.collect()` 只释放 Python 对象，CUDA caching allocator 仍持有那些块；不配 `empty_cache` 等于白干
+   - `trainer/base.py::maybe_run_gc`、`trainer/base.py::run_inference` 末尾、所有 trainer（diffusion / distillation / gan / ode）的 `step % 20 == 0` 处、save 前后均成对
+   - 唯一保留单独 `empty_cache` 的位置：`trainer/gan.py:460` 每步末尾的兜底（每步 `gc.collect` 太贵）
+
+### 实测效果
+
+加完这一组改动后，2 机 16 卡 diffusion trainer：
+- inference 时显存明显下降（VAE 不在 GPU 占地），训练 KV cache 也已释放，inference pipeline 有完整 headroom
+- 不再出现 OOM

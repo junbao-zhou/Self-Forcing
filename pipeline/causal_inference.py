@@ -1,3 +1,4 @@
+import gc
 import time
 from typing import List, Optional
 import logging
@@ -25,8 +26,15 @@ class CausalInferencePipeline(torch.nn.Module):
         generator=None,
         text_encoder=None,
         vae=None,
+        vae_offload_cpu: bool = False,
     ):
         super().__init__()
+        self.device = device
+        # When True, the VAE lives on CPU and is moved to GPU only for the
+        # decode at the end of `inference()`, then moved back. Saves a few GB
+        # of resident GPU memory at the cost of two H2D/D2H transfers per call.
+        # Mirrors the pattern in stream_inference.py.
+        self.vae_offload_cpu = vae_offload_cpu
         # Step 1: Initialize all models
         self.generator = (
             WanDiffusionWrapper(
@@ -64,7 +72,10 @@ class CausalInferencePipeline(torch.nn.Module):
 
         self.text_encoder.to(device=device)
         self.generator.to(device=device)
-        self.vae.to(device=device)
+        if self.vae_offload_cpu:
+            self.vae.to(device="cpu")
+        else:
+            self.vae.to(device=device)
 
         if self.num_frame_per_block > 1:
             self.generator.model.num_frame_per_block = self.num_frame_per_block
@@ -304,8 +315,19 @@ class CausalInferencePipeline(torch.nn.Module):
 
         # Step 4: Decode the output
         if not do_not_decode_video:
+            # Free transient memory from the diffusion loop (KV cache stays,
+            # but per-step temporaries / autograd-noop graphs can be reclaimed)
+            # before VAE decode pushes another peak.
+            gc.collect()
+            torch.cuda.empty_cache()
+            if self.vae_offload_cpu:
+                self.vae.to(device=self.device)
             start_decode_time = time.time()
             video = self.vae.decode_to_pixel(output, use_cache=False)
+            if self.vae_offload_cpu:
+                self.vae.to(device="cpu")
+                gc.collect()
+                torch.cuda.empty_cache()
             video = (video * 0.5 + 0.5).clamp(0, 1)
             logging.info(
                 f"VAE decode time: {time.time() - start_decode_time:.2f} seconds"

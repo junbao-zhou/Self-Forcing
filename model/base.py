@@ -172,11 +172,14 @@ class SelfForcingModel(BaseModel):
         dist.broadcast(num_generated_blocks, src=0)
         num_generated_blocks = num_generated_blocks.item()
         num_generated_frames = num_generated_blocks * self.num_frame_per_block
+        logging.debug(f"{num_generated_frames=}")
         if self.args.independent_first_frame and initial_latent is None:
             num_generated_frames += 1
             min_num_frames += 1
+            logging.debug(f"Adjusted for independent first frame: {num_generated_frames=}, {min_num_frames=}")
         # Sync num_generated_frames across all processes
         noise_shape[1] = num_generated_frames
+        logging.debug(f"{noise_shape=}")
 
         pred_image_or_video, denoised_timestep_from, denoised_timestep_to = (
             self._consistency_backward_simulation(
@@ -184,6 +187,7 @@ class SelfForcingModel(BaseModel):
                 **conditional_dict,
             )
         )
+        logging.debug(f"Completed backward simulation with {pred_image_or_video.shape=}, {denoised_timestep_from=}, {denoised_timestep_to=}")
         # Slice last 21 frames
         if pred_image_or_video.shape[1] > 21:
             with torch.no_grad():

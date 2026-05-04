@@ -1,3 +1,5 @@
+import logging
+
 from utils.wan_wrapper import WanDiffusionWrapper
 from utils.scheduler import SchedulerInterface
 from typing import List, Optional
@@ -74,6 +76,11 @@ class SelfForcingTrainingPipeline:
         return_sim_step: bool = False,
         **conditional_dict
     ) -> torch.Tensor:
+        logging.debug(f"""
+    {noise.shape = },
+    initial_latent = {None if initial_latent is None else initial_latent.shape}
+""")
+
         batch_size, num_frames, num_channels, height, width = noise.shape
         if not self.independent_first_frame or (
             self.independent_first_frame and initial_latent is not None
@@ -86,6 +93,9 @@ class SelfForcingTrainingPipeline:
             # Using a [1, 4, 4, 4, 4, 4, ...] model to generate a video without image conditioning
             assert (num_frames - 1) % self.num_frame_per_block == 0
             num_blocks = (num_frames - 1) // self.num_frame_per_block
+
+        logging.debug(f"Computed {num_blocks=}, {num_frames=}, {self.num_frame_per_block=}")
+
         num_input_frames = initial_latent.shape[1] if initial_latent is not None else 0
         num_output_frames = num_frames + num_input_frames  # add the initial latent frames
         output = torch.zeros(
@@ -94,32 +104,23 @@ class SelfForcingTrainingPipeline:
             dtype=noise.dtype,
         )
 
-        # Step 1: Initialize KV cache to all zeros
-        self._initialize_kv_cache(batch_size=batch_size, dtype=noise.dtype, device=noise.device)
-        self._initialize_crossattn_cache(
-            batch_size=batch_size, dtype=noise.dtype, device=noise.device
-        )
-        # if self.kv_cache1 is None:
-        #     self._initialize_kv_cache(
-        #         batch_size=batch_size,
-        #         dtype=noise.dtype,
-        #         device=noise.device,
-        #     )
-        #     self._initialize_crossattn_cache(
-        #         batch_size=batch_size,
-        #         dtype=noise.dtype,
-        #         device=noise.device
-        #     )
-        # else:
-        #     # reset cross attn cache
-        #     for block_index in range(self.num_transformer_blocks):
-        #         self.crossattn_cache[block_index]["is_init"] = False
-        #     # reset kv cache
-        #     for block_index in range(len(self.kv_cache1)):
-        #         self.kv_cache1[block_index]["global_end_index"] = torch.tensor(
-        #             [0], dtype=torch.long, device=noise.device)
-        #         self.kv_cache1[block_index]["local_end_index"] = torch.tensor(
-        #             [0], dtype=torch.long, device=noise.device)
+        # Step 1: Initialize KV cache lazily on first call; reuse + reset afterwards.
+        # Re-allocating ~12 GB (per-rank, 30 layers × 2 × bf16) of KV cache every
+        # step caused allocator churn / fragmentation OOM in 2-node 16-GPU runs.
+        if self.kv_cache1 is None:
+            self._initialize_kv_cache(
+                batch_size=batch_size,
+                dtype=noise.dtype,
+                device=noise.device,
+            )
+            self._initialize_crossattn_cache(
+                batch_size=batch_size,
+                dtype=noise.dtype,
+                device=noise.device,
+            )
+        else:
+            self._reset_kv_cache()
+            self._reset_crossattn_cache()
 
         # Step 2: Cache context feature
         current_start_frame = 0
@@ -146,9 +147,16 @@ class SelfForcingTrainingPipeline:
         exit_flags = self.generate_and_sync_list(
             len(all_num_frames), num_denoising_steps, device=noise.device
         )
+
+        logging.debug(f"After generate_and_sync_list: {exit_flags = }, {len(exit_flags) = }")
+
+        if len(exit_flags) == 0:
+            raise RuntimeError(f"exit_flags is empty! {num_blocks = }, {all_num_frames = }")
+
         start_gradient_frame_index = num_output_frames - 21
 
         # for block_index in range(num_blocks):
+        logging.debug(f"Starting generating blocks, {num_blocks=}, {len(all_num_frames)=}, {exit_flags=}")
         for block_index, current_num_frames in enumerate(all_num_frames):
             noisy_input = noise[
                 :,
@@ -157,15 +165,19 @@ class SelfForcingTrainingPipeline:
                 + current_num_frames
                 - num_input_frames,
             ]
+            logging.debug(f"{block_index = }, {current_num_frames = }, {noisy_input.shape = }, {current_start_frame = }, {num_input_frames = }")
 
             # Step 3.1: Spatial denoising loop
             for index, current_timestep in enumerate(self.denoising_step_list):
+                logging.debug(f"timestep index = {index}, {current_timestep = }")
+                logging.debug(f"{self.same_step_across_blocks = }")
                 if self.same_step_across_blocks:
                     exit_flag = index == exit_flags[0]
                 else:
                     exit_flag = (
                         index == exit_flags[block_index]
                     )  # Only backprop at the randomly selected timestep (consistent across all ranks)
+                logging.debug(f"{exit_flag = }")
                 timestep = (
                     torch.ones(
                         [batch_size, current_num_frames],
@@ -176,6 +188,7 @@ class SelfForcingTrainingPipeline:
                 )
 
                 if not exit_flag:
+                    logging.debug(f"No exit at this step, running with torch.no_grad()")
                     with torch.no_grad():
                         _, denoised_pred = self.generator(
                             noisy_image_or_video=noisy_input,
@@ -197,9 +210,11 @@ class SelfForcingTrainingPipeline:
                             ),
                         ).unflatten(0, denoised_pred.shape[:2])
                 else:
+                    logging.debug(f"Exit at this step")
                     # for getting real output
                     # with torch.set_grad_enabled(current_start_frame >= start_gradient_frame_index):
                     if current_start_frame < start_gradient_frame_index:
+                        logging.debug(f"{current_start_frame = } < {start_gradient_frame_index = }, running with torch.no_grad()")
                         with torch.no_grad():
                             _, denoised_pred = self.generator(
                                 noisy_image_or_video=noisy_input,
@@ -210,6 +225,7 @@ class SelfForcingTrainingPipeline:
                                 current_start=current_start_frame * self.frame_seq_length,
                             )
                     else:
+                        logging.debug(f"{current_start_frame = } >= {start_gradient_frame_index = }, running with gradients enabled")
                         _, denoised_pred = self.generator(
                             noisy_image_or_video=noisy_input,
                             conditional_dict=conditional_dict,
@@ -227,18 +243,27 @@ class SelfForcingTrainingPipeline:
             ] = denoised_pred
 
             # Step 3.3: rerun with timestep zero to update the cache
-            context_timestep = torch.ones_like(timestep) * self.context_noise
+            logging.debug(f"{self.context_noise = }")
+            context_timestep = (
+                torch.ones(
+                    [batch_size, current_num_frames],
+                    device=noise.device,
+                    dtype=torch.int64,
+                )
+                * self.context_noise
+            )
             # add context noise
             denoised_pred = self.scheduler.add_noise(
                 denoised_pred.flatten(0, 1),
                 torch.randn_like(denoised_pred.flatten(0, 1)),
-                context_timestep
+                self.context_noise
                 * torch.ones(
                     [batch_size * current_num_frames],
                     device=noise.device,
                     dtype=torch.long,
                 ),
             ).unflatten(0, denoised_pred.shape[:2])
+            logging.debug(f"Rerunning the model with {context_timestep[0,0].item() = } to update the cache")
             with torch.no_grad():
                 self.generator(
                     noisy_image_or_video=denoised_pred,
@@ -253,9 +278,13 @@ class SelfForcingTrainingPipeline:
             current_start_frame += current_num_frames
 
         # Step 3.5: Return the denoised timestep
+        logging.debug(f"Computing denoised_timestep")
+
         if not self.same_step_across_blocks:
+            logging.debug(f"{self.same_step_across_blocks = }")
             denoised_timestep_from, denoised_timestep_to = None, None
         elif exit_flags[0] == len(self.denoising_step_list) - 1:
+            logging.debug(f"{exit_flags[0] = } == {len(self.denoising_step_list) - 1 = }")
             denoised_timestep_to = 0
             denoised_timestep_from = (
                 1000
@@ -288,6 +317,8 @@ class SelfForcingTrainingPipeline:
                     dim=0,
                 ).item()
             )
+
+        logging.debug(f"Computed {denoised_timestep_from = }, {denoised_timestep_to = }")
 
         if return_sim_step:
             return (
@@ -350,3 +381,53 @@ class SelfForcingTrainingPipeline:
                 }
             )
         self.crossattn_cache = crossattn_cache
+
+    def _reset_kv_cache(self):
+        """
+        Reset KV cache between training steps without re-allocating the K/V buffers.
+        Re-uses the already-allocated tensors, zeros the buffers and the index
+        counters.
+
+        Note: the model writes K/V into the cache via in-place index assignment
+        (`kv_cache["k"][:, s:e] = roped_key`). When `roped_key` carries grad
+        (the gradient block under self-forcing), this in-place op attaches a
+        `grad_fn` (IndexPut) to the cache tensor and turns it from a leaf into
+        a non-leaf with `requires_grad=True`. Backward frees graph memory but
+        does not clear `grad_fn`, so `is_leaf` stays False into the next step
+        and `requires_grad_(False)` would error.
+        Calling `detach_()` first severs the lingering autograd link and makes
+        the tensor a leaf again, which is why this is the original author's
+        reason for not enabling lazy KV-cache reset.
+        """
+        logging.debug(f"{type(self).__name__}._reset_kv_cache")
+        for block_index in range(len(self.kv_cache1)):
+            cache = self.kv_cache1[block_index]
+            for key in ("k", "v"):
+                tensor = cache[key]
+                tensor.detach_()
+                if tensor.requires_grad:
+                    tensor.requires_grad_(False)
+                if tensor.grad is not None:
+                    tensor.grad = None
+                tensor.zero_()
+            cache["global_end_index"].zero_()
+            cache["local_end_index"].zero_()
+
+    def _reset_crossattn_cache(self):
+        """
+        Reset cross-attn cache between training steps. Same in-place strategy
+        as `_reset_kv_cache`: detach lingering autograd links first, then keep
+        and zero the buffers, flip is_init, scrub grads.
+        """
+        logging.debug(f"{type(self).__name__}._reset_crossattn_cache")
+        for block_index in range(self.num_transformer_blocks):
+            cache = self.crossattn_cache[block_index]
+            for key in ("k", "v"):
+                tensor = cache[key]
+                tensor.detach_()
+                if tensor.requires_grad:
+                    tensor.requires_grad_(False)
+                if tensor.grad is not None:
+                    tensor.grad = None
+                tensor.zero_()
+            cache["is_init"] = False

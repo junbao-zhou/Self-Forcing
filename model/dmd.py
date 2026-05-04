@@ -1,3 +1,5 @@
+import logging
+
 from pipeline import SelfForcingTrainingPipeline
 import torch.nn.functional as F
 from typing import Optional, Tuple
@@ -78,6 +80,7 @@ class DMD(SelfForcingModel):
             - kl_log_dict: a dictionary containing the intermediate tensors for logging.
         """
         # Step 1: Compute the fake score
+        logging.debug(f"fake score forward with {noisy_image_or_video.shape = } {conditional_dict.keys() = }, {timestep = }")
         _, pred_fake_image_cond = self.fake_score(
             noisy_image_or_video=noisy_image_or_video,
             conditional_dict=conditional_dict,
@@ -85,6 +88,7 @@ class DMD(SelfForcingModel):
         )
 
         if self.fake_guidance_scale != 0.0:
+            logging.debug(f"fake score forward with {noisy_image_or_video.shape = } {conditional_dict.keys() = }, {timestep = }")
             _, pred_fake_image_uncond = self.fake_score(
                 noisy_image_or_video=noisy_image_or_video,
                 conditional_dict=unconditional_dict,
@@ -100,12 +104,14 @@ class DMD(SelfForcingModel):
         # Step 2: Compute the real score
         # We compute the conditional and unconditional prediction
         # and add them together to achieve cfg (https://arxiv.org/abs/2207.12598)
+        logging.debug(f"real score forward with {noisy_image_or_video.shape = } {conditional_dict.keys() = }, {timestep = }")
         _, pred_real_image_cond = self.real_score(
             noisy_image_or_video=noisy_image_or_video,
             conditional_dict=conditional_dict,
             timestep=timestep,
         )
 
+        logging.debug(f"real score forward with {noisy_image_or_video.shape = } {unconditional_dict.keys() = }, {timestep = }")
         _, pred_real_image_uncond = self.real_score(
             noisy_image_or_video=noisy_image_or_video,
             conditional_dict=unconditional_dict,
@@ -119,6 +125,7 @@ class DMD(SelfForcingModel):
 
         # Step 3: Compute the DMD gradient (DMD paper eq. 7).
         grad = pred_fake_image - pred_real_image
+        logging.debug(f"Computed raw grad with {grad.shape = }")
 
         # TODO: Change the normalizer for causal teacher
         if normalization:
@@ -153,6 +160,15 @@ class DMD(SelfForcingModel):
             - dmd_loss: a scalar tensor representing the DMD loss.
             - dmd_log_dict: a dictionary containing the intermediate tensors for logging.
         """
+        logging.debug(f"""
+    {image_or_video.shape = },
+    {conditional_dict.keys() = },
+    {unconditional_dict.keys() = },
+    {gradient_mask is None = },
+    {denoised_timestep_from = },
+    {denoised_timestep_to = },
+"""
+        )
         original_latent = image_or_video
 
         batch_size, num_frame = image_or_video.shape[:2]
@@ -164,11 +180,13 @@ class DMD(SelfForcingModel):
                 if self.ts_schedule and denoised_timestep_to is not None
                 else self.min_score_timestep
             )
+            logging.debug(f"{min_timestep = }")
             max_timestep = (
                 denoised_timestep_from
                 if self.ts_schedule_max and denoised_timestep_from is not None
                 else self.num_train_timestep
             )
+            logging.debug(f"{max_timestep = }")
             timestep = self._get_timestep(
                 min_timestep,
                 max_timestep,
@@ -177,6 +195,7 @@ class DMD(SelfForcingModel):
                 self.num_frame_per_block,
                 uniform_timestep=True,
             )
+            logging.debug(f"Sampled {timestep = } with shape {timestep.shape = }")
 
             # TODO:should we change it to `timestep = self.scheduler.timesteps[timestep]`?
             if self.timestep_shift > 1:
@@ -189,6 +208,7 @@ class DMD(SelfForcingModel):
             timestep = timestep.clamp(self.min_step, self.max_step)
 
             noise = torch.randn_like(image_or_video)
+            logging.debug(f"Sampled noise with shape {noise.shape = }")
             noisy_latent = (
                 self.scheduler.add_noise(
                     image_or_video.flatten(0, 1),
@@ -198,6 +218,7 @@ class DMD(SelfForcingModel):
                 .detach()
                 .unflatten(0, (batch_size, num_frame))
             )
+            logging.debug(f"Added noise to get {noisy_latent.shape = }")
 
             # Step 2: Compute the KL grad
             grad, dmd_log_dict = self._compute_kl_grad(
@@ -207,7 +228,9 @@ class DMD(SelfForcingModel):
                 conditional_dict=conditional_dict,
                 unconditional_dict=unconditional_dict,
             )
+            logging.debug(f"Computed KL grad with shape {grad.shape = }")
 
+        logging.debug(f"{gradient_mask is None = }")
         if gradient_mask is not None:
             dmd_loss = 0.5 * F.mse_loss(
                 original_latent.double()[gradient_mask],
@@ -244,6 +267,15 @@ class DMD(SelfForcingModel):
             - loss: a scalar tensor representing the generator loss.
             - generator_log_dict: a dictionary containing the intermediate tensors for logging.
         """
+        logging.debug(
+            f"""
+    {image_or_video_shape = },
+    {conditional_dict.keys() = },
+    {unconditional_dict.keys() = },
+    {clean_latent is None = },
+    {initial_latent is None = },
+"""
+        )
         # Step 1: Unroll generator to obtain fake videos
         (
             pred_image,
@@ -255,6 +287,7 @@ class DMD(SelfForcingModel):
             conditional_dict=conditional_dict,
             initial_latent=initial_latent,
         )
+        logging.debug(f"Obtained generator output with {pred_image.shape = }, {gradient_mask is not None = }, {denoised_timestep_from = }, {denoised_timestep_to = }")
 
         # Step 2: Compute the DMD loss
         dmd_loss, dmd_log_dict = self.compute_distribution_matching_loss(
@@ -290,6 +323,15 @@ class DMD(SelfForcingModel):
             - loss: a scalar tensor representing the generator loss.
             - critic_log_dict: a dictionary containing the intermediate tensors for logging.
         """
+        logging.debug(
+            f"""
+    {image_or_video_shape = },
+    {conditional_dict.keys() = },
+    {unconditional_dict.keys() = },
+    {clean_latent is None = },
+    {initial_latent is None = },
+"""
+        )
 
         # Step 1: Run generator on backward simulated noisy input
         with torch.no_grad():

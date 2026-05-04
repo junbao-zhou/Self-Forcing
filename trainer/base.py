@@ -77,7 +77,11 @@ class BaseTrainer:
         with open("prompts/MovieGenVideoBench_extended.txt", "r") as f:
             prompts = [line.strip() for line in f.readlines()[0:7:2]]
 
-        pipeline = CausalInferencePipeline(self.config, device=self.device)
+        pipeline = CausalInferencePipeline(
+            self.config,
+            device=self.device,
+            vae_offload_cpu=getattr(self.config, "vae_offload_cpu", False),
+        )
         pipeline.generator.load_state_dict(generator_state)
         pipeline = pipeline.to(dtype=torch.bfloat16)
 

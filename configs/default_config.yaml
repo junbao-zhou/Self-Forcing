@@ -21,6 +21,7 @@ num_frames: 81
 
 no_save: false
 no_visualize: false
+vae_offload_cpu: true
 logdir: logs
 logging_level: debug
 wandb_save_dir: ""

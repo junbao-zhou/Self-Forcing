@@ -266,6 +266,12 @@ class Trainer(BaseTrainer):
                 self.config.inference_interval > 0
                 and self.step % self.config.inference_interval == 0
             ):
+                # `run_inference` builds its own CausalInferencePipeline on rank 0
+                # with another ~12 GB KV cache. Without releasing the training
+                # pipeline first, both KV caches coexist during inference -> OOM.
+                # Drop training pipeline now so inference has full headroom; the
+                # next train step rebuilds via lazy init.
+                self.model.inference_pipeline = None
                 gc.collect()
                 torch.cuda.empty_cache()
                 self.run_inference(self.model.generator)

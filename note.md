@@ -436,21 +436,6 @@ diffusion trainer 训练: 8 卡训练时能跑， 接近满显存， 但中途 i
 
 ## 2 机 16 卡 OOM 定位（2026-05-03）
 
-### 触发位置
-
-用户代码触发点：`trainer/diffusion.py:215` 的 `generator_loss.backward()`。
-
-栈底在 PyTorch FSDP 内部 post-backward hook：
-
-```
-torch/distributed/fsdp/_runtime_utils.py:755  _post_backward_hook
-torch/distributed/fsdp/_runtime_utils.py:837  _reduce_grad
-torch/distributed/fsdp/_runtime_utils.py:890  _get_reduce_scatter_tensors
-    new_sharded_grad = torch.empty_like(chunks[0])   # <- 678 MiB 分配失败
-```
-
-前向 self-forcing rollout 已经算完（日志最后一条是 `model/diffusion.py:100` 打印 `pred_image.shape=[2,21,16,60,104]`），死在 backward 阶段 FSDP 做 reduce-scatter 申请 sharded grad buffer 那一下。
-
 ### 显存现场
 
 H800 80 GB，已用 78.52 GB，PyTorch 实际占 62.67 GB，**reserved-but-unallocated 10.75 GB**，只剩 679 MiB，连 678 MiB 的新 sharded grad buffer 都装不下。
@@ -493,3 +478,48 @@ H800 80 GB，已用 78.52 GB，PyTorch 实际占 62.67 GB，**reserved-but-unall
    - `crossattn_cache` 重置 `is_init=False`，让模型下一步根据新 prompt 重新填充
 
 预期效果：减少每步 12 GB 的 alloc/free churn，缓解碎片。
+
+## KV cache 复用时的 leaf / grad_fn 陷阱（也是原作者注释掉懒加载的根因）
+
+### 现象
+
+跑起来第 2 步开头，`_reset_kv_cache` 调 `tensor.requires_grad_(False)` 直接报：
+
+```
+RuntimeError: you can only change requires_grad flags of leaf variables.
+If you want to use a computed variable in a subgraph that doesn't require
+differentiation use var_no_grad = var.detach().
+```
+
+第 1 步训练成功，问题只在复用 buffer 时出现。每步都重新 `torch.zeros` 分配（即原始实现）就不会触发。
+
+### 根因
+
+模型 attention 写入 KV cache 是 in-place index 赋值（`wan/modules/causal_model.py:241-242`）：
+
+```python
+kv_cache["k"][:, local_start_index:local_end_index] = roped_key
+kv_cache["v"][:, local_start_index:local_end_index] = v
+```
+
+当 self forcing 进入"带梯度"那一步，`roped_key` / `v` 来自 generator 的带梯度前向，`requires_grad=True`。这种 in-place 写入会被 autograd 当作 `IndexPut` (`CopySlices`) op 记录：
+
+- 把作为目标的 leaf 张量 **染成 non-leaf**：`is_leaf=False`
+- 同时把 `requires_grad` **隐式翻成 True**
+- 给 leaf 挂上 `grad_fn=<CopySlices>`
+
+backward 跑完之后，autograd 引擎释放了图里 saved-for-backward 的中间张量（释放显存），但 **不会清 tensor 上的 `grad_fn` 引用**——那个 `CopySlices` Python 对象仍然挂在 cache 张量上，地址在两次 backward 之间保持不变。这是 PyTorch 的设计（为了支持 `retain_graph=True`）。
+
+下一步训练进 `_reset_kv_cache` 时，cache 张量还是 `is_leaf=False, requires_grad=True, grad_fn=<CopySlices>`，所以 `requires_grad_(False)` 直接报 leaf-only 的错。
+
+原作者每步重新 `torch.zeros` 看似"浪费"，其实就是用每步丢掉旧张量来回避这个问题：旧张量带着残留的 `grad_fn` 一起被 GC 掉，新分配的张量是干净 leaf。代价是每步 12 GB 的 alloc/free，反过来撑碎片。
+
+### 修法
+
+`_reset_kv_cache` / `_reset_crossattn_cache` 第一行改成 `tensor.detach_()`（in-place 版本）：
+
+- 清掉 `grad_fn`
+- `requires_grad` 复位 False
+- `is_leaf` 复位 True
+
+之后再调 `requires_grad_(False)`、清 `.grad`、`zero_()` 都合法，buffer 也得以复用。

@@ -1,3 +1,4 @@
+import gc
 import logging
 
 from utils.dataset import ShardingLMDBDataset, cycle
@@ -212,6 +213,7 @@ class Trainer(BaseTrainer):
         self.model.eval()  # prevent any randomness (e.g. dropout)
 
         if self.step % 20 == 0:
+            gc.collect()
             torch.cuda.empty_cache()
 
         # Step 1: Get the next batch of text prompts
@@ -337,6 +339,7 @@ class Trainer(BaseTrainer):
             ):
                 print("Resetting critic optimizer")
                 del self.critic_optimizer
+                gc.collect()
                 torch.cuda.empty_cache()
                 # Create new optimizers
                 self.critic_optimizer = torch.optim.AdamW(
@@ -416,8 +419,10 @@ class Trainer(BaseTrainer):
                 and (self.step - start_step) > 0
                 and self.step % self.config.log_iters == 0
             ):
+                gc.collect()
                 torch.cuda.empty_cache()
                 self.save()
+                gc.collect()
                 torch.cuda.empty_cache()
 
             # Logging

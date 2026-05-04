@@ -96,6 +96,7 @@ class BaseTrainer:
                 logging.info(f"Saved inference video to {output_video_path}")
 
         del pipeline
+        gc.collect()
         torch.cuda.empty_cache()
 
     def log_metrics(self, metrics):
@@ -120,3 +121,7 @@ class BaseTrainer:
             if dist.get_rank() == 0:
                 logging.info("DistGarbageCollector: Running GC.")
             gc.collect()
+            # gc only frees Python objects; without empty_cache the CUDA caching
+            # allocator still holds the released blocks, so empty_cache pairs
+            # naturally here to actually return them to the driver.
+            torch.cuda.empty_cache()

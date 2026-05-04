@@ -1,3 +1,4 @@
+import gc
 import logging
 from utils.dataset import ODERegressionLMDBDataset, cycle
 from model import ODERegression
@@ -217,6 +218,7 @@ class Trainer(BaseTrainer):
             self.train_one_step()
             if (not self.config.no_save) and self.step % self.config.log_iters == 0:
                 self.save()
+                gc.collect()
                 torch.cuda.empty_cache()
 
             barrier()

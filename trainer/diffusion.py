@@ -1,3 +1,4 @@
+import gc
 import logging
 
 from model import CausalDiffusion
@@ -159,6 +160,7 @@ class Trainer(BaseTrainer):
         self.log_iters = 1
 
         if self.step % 20 == 0:
+            gc.collect()
             torch.cuda.empty_cache()
 
         # Step 1: Get the next batch of text prompts
@@ -264,14 +266,19 @@ class Trainer(BaseTrainer):
                 self.config.inference_interval > 0
                 and self.step % self.config.inference_interval == 0
             ):
+                gc.collect()
                 torch.cuda.empty_cache()
                 self.run_inference(self.model.generator)
+                gc.collect()
+                torch.cuda.empty_cache()
 
             batch = next(self.dataloader)
             self.train_one_step(batch)
             if (not self.config.no_save) and self.step % self.config.log_iters == 0:
+                gc.collect()
                 torch.cuda.empty_cache()
                 self.save()
+                gc.collect()
                 torch.cuda.empty_cache()
 
             barrier()

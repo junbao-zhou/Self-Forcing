@@ -77,7 +77,10 @@ class Trainer(BaseTrainer):
                 num_frames=video_frames,
             )
         else:
-            dataset = OpenVidLatentDataset(config.latent_folder)
+            dataset = OpenVidLatentDataset(
+                latent_folder=config.latent_folder,
+                csv_path=config.latent_csv_path,
+            )
         sampler = torch.utils.data.distributed.DistributedSampler(
             dataset, shuffle=True, drop_last=True
         )

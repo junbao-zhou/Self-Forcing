@@ -49,5 +49,6 @@ load_raw_video: false
 video_folder: /publicdata/huggingface.co/datasets/nkp37/OpenVid-1M/video_folder
 csv_path: /publicdata/huggingface.co/datasets/nkp37/OpenVid-1M/data/train/OpenVid-1M.csv
 latent_folder: /workspace/group_share/adc-perception-xbrain/zhoujb4/dataset/openvid_latent
+latent_csv_path: /workspace/group_share/adc-perception-xbrain/zhoujb4/dataset/openvid_latent/latents.csv
 model_kwargs:
   timestep_shift: 5.0

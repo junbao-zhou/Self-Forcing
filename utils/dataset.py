@@ -317,35 +317,36 @@ class OpenVidLatentDataset(Dataset):
     def __init__(
         self,
         latent_folder: str,
+        csv_path: str,
         max_pair: int = int(1e8),
     ):
         logging.debug(
             f"""
     {latent_folder = },
+    {csv_path = },
     {max_pair = },
 """
         )
         self.latent_folder = latent_folder
-        self.latent_files = sorted(
-            entry.name
-            for entry in os.scandir(latent_folder)
-            if entry.name.endswith(".pt")
-        )
-        self.latent_files = self.latent_files[:max_pair]
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            self.samples = [(row["filename"], row["caption"]) for row in reader]
+        self.samples = self.samples[:max_pair]
 
     def __len__(self):
-        return len(self.latent_files)
+        return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict:
-        path = os.path.join(self.latent_folder, self.latent_files[idx])
-        data = torch.load(path, map_location="cpu", weights_only=False)
+        filename, caption = self.samples[idx]
+        path = os.path.join(self.latent_folder, filename)
+        data = torch.load(path, map_location="cpu", mmap=True, weights_only=False)
         latent = data["latent"]
         if not torch.is_tensor(latent):
             latent = torch.tensor(latent)
         # File stores [1, F, C, H, W]; treat the leading 1 as the denoising-step dim
         # so downstream code that does `ode_latent[:, -1]` still works.
         return {
-            "prompts": data["caption"],
+            "prompts": caption,
             "ode_latent": latent.to(torch.float32),
         }
 

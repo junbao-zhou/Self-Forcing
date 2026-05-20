@@ -120,7 +120,7 @@ def _configure_logging(
         style="{",
     )
 
-    file_handler = logging.FileHandler(logfile, mode="a")
+    file_handler = logging.FileHandler(logfile, mode="w")
     stream_handler = logging.StreamHandler()
 
     for handler in [file_handler, stream_handler]:

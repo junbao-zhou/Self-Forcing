@@ -12,6 +12,13 @@ import cv2
 import logging
 
 
+def parse_latent_frame_count_from_shape(shape_text: str) -> int:
+    shape_values = shape_text.strip().strip("()[]").split(",")
+    if len(shape_values) < 2:
+        raise ValueError(f"Expected at least two dimensions in shape: {shape_text}")
+    return int(shape_values[1].strip())
+
+
 class TextDataset(Dataset):
     def __init__(
         self,
@@ -319,25 +326,45 @@ class OpenVidLatentDataset(Dataset):
         latent_folder: str,
         csv_path: str,
         max_pair: int = int(1e8),
+        num_latent_frames: int = None,
     ):
         logging.debug(
             f"""
     {latent_folder = },
     {csv_path = },
     {max_pair = },
+    {num_latent_frames = },
 """
         )
         self.latent_folder = latent_folder
+        self.num_latent_frames = num_latent_frames
+        # The CSV's `shape` column stores the on-disk latent shape as a string
+        # tuple "(1, F, C, H, W)" — index 1 is the latent frame count. When
+        # `num_latent_frames` is set, drop samples that don't have enough
+        # frames to slice from.
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            self.samples = [(row["filename"], row["caption"]) for row in reader]
+            samples = []
+            for row in reader:
+                file_num_latent_frames = parse_latent_frame_count_from_shape(row["shape"])
+                if (
+                    num_latent_frames is not None
+                    and file_num_latent_frames < num_latent_frames
+                ):
+                    continue
+                samples.append((row["filename"], row["caption"], file_num_latent_frames))
+            self.samples = samples
         self.samples = self.samples[:max_pair]
+        logging.info(
+            f"OpenVidLatentDataset loaded {len(self.samples)} samples "
+            f"(num_latent_frames={num_latent_frames}, max_pair={max_pair})"
+        )
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict:
-        filename, caption = self.samples[idx]
+        filename, caption, file_num_latent_frames = self.samples[idx]
         path = os.path.join(self.latent_folder, filename)
         data = torch.load(path, map_location="cpu", mmap=True, weights_only=False)
         latent = data["latent"]
@@ -345,6 +372,11 @@ class OpenVidLatentDataset(Dataset):
             latent = torch.tensor(latent)
         # File stores [1, F, C, H, W]; treat the leading 1 as the denoising-step dim
         # so downstream code that does `ode_latent[:, -1]` still works.
+        if self.num_latent_frames is not None:
+            start = int(
+                torch.randint(0, file_num_latent_frames - self.num_latent_frames + 1, (1,)).item()
+            )
+            latent = latent[:, start : start + self.num_latent_frames]
         return {
             "prompts": caption,
             "ode_latent": latent.to(torch.float32),

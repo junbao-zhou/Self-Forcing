@@ -46,9 +46,8 @@ def main(
         logdir = Path(orig_cwd) / logdir
     logdir.mkdir(parents=True, exist_ok=True)
 
-    time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
     _configure_logging(
-        logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}-{time_str}.log",
+        logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}.log",
         logging_level=string_to_logging_level(config.logging_level),
     )
 
@@ -69,6 +68,7 @@ config = {format_dict(config)}
                 Path(orig_cwd),
                 copy_codes.build_matcher(copy_codes.load_gitignore(Path(orig_cwd))),
                 code_only=True,
+                include_git=False,
             ),
             Path(orig_cwd),
             code_backup_dir,

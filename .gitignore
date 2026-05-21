@@ -1,13 +1,12 @@
-__pycache__
-*.egg-info
+*
 
-wan_models
-checkpoints
-
-output*
-
-*logs/
-
-.claude
-
-.vscode
+!.gitignore
+!.gitattributes
+!*.py
+!*.yml
+!*.yaml
+!*.json
+!*.md
+!README
+!readme
+!LICENSE

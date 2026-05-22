@@ -162,26 +162,38 @@ def collect_files(
     root: Path,
     matcher,
     code_only: bool,
+    include_git: bool,
 ) -> List[Path]:
     out: List[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = os.path.relpath(dirpath, root)
         if rel_dir == ".":
             rel_dir = ""
+        in_git = rel_dir == ".git" or rel_dir.startswith(".git/")
         # prune dirs
         keep = []
         for d in dirnames:
             rel = f"{rel_dir}/{d}" if rel_dir else d
-            if d == ".git" or matcher(rel, True):
+            if d == ".git":
+                if include_git:
+                    keep.append(d)
+                continue
+            if in_git:
+                keep.append(d)
+                continue
+            if matcher(rel, True):
                 continue
             keep.append(d)
         dirnames[:] = keep
         # files
         for f in filenames:
             relf = f"{rel_dir}/{f}" if rel_dir else f
+            p = Path(dirpath) / f
+            if in_git:
+                out.append(p)
+                continue
             if matcher(relf, False):
                 continue
-            p = Path(dirpath) / f
             if code_only:
                 if p.suffix in CODE_EXTENSIONS:
                     out.append(p)
@@ -289,6 +301,11 @@ def parse_args(
         help="Create remote destination directory via ssh before scp.",
     )
     ap.add_argument(
+        "--include-git",
+        action="store_true",
+        help="Also copy the .git directory (full repo state).",
+    )
+    ap.add_argument(
         "--scp-args",
         default="",
         help="Extra arguments for scp (e.g. '-C -l 8192').",
@@ -306,7 +323,12 @@ def main(
         return 2
     patterns = load_gitignore(root)
     matcher = build_matcher(patterns)
-    files = collect_files(root, matcher, code_only=not args.all_files)
+    files = collect_files(
+        root,
+        matcher,
+        code_only=not args.all_files,
+        include_git=args.include_git,
+    )
     files_sorted = sorted(files)
     print(f"Selected {len(files_sorted)} files.")
     if args.dry_run:

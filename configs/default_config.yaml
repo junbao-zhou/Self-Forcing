@@ -10,6 +10,14 @@ gc_interval: 100
 context_noise: 0
 causal: true
 
+generator_config_path: wan_models/Wan2.1-T2V-1.3B/
+real_score_config_path: wan_models/Wan2.1-T2V-14B/
+real_score_checkpoint_path: wan_models/Wan2.1-T2V-14B/
+fake_score_config_path: wan_models/Wan2.1-T2V-14B/
+fake_score_checkpoint_path: wan_models/Wan2.1-T2V-14B/
+text_encoder_checkpoint_path: wan_models/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth
+vae_checkpoint_path: wan_models/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth
+
 ckpt_step: 0
 prompt_name: MovieGenVideoBench
 prompt_path: prompts/MovieGenVideoBench.txt

@@ -16,12 +16,22 @@ class BidirectionalInferencePipeline(torch.nn.Module):
         super().__init__()
         # Step 1: Initialize all models
         self.generator = (
-            WanDiffusionWrapper(**getattr(args, "model_kwargs", {}), is_causal=False)
+            WanDiffusionWrapper(
+                config_path=args.generator_config_path,
+                **getattr(args, "model_kwargs", {}),
+                is_causal=False,
+            )
             if generator is None
             else generator
         )
-        self.text_encoder = WanTextEncoder() if text_encoder is None else text_encoder
-        self.vae = WanVAEWrapper() if vae is None else vae
+        self.text_encoder = (
+            WanTextEncoder(checkpoint_path=args.text_encoder_checkpoint_path)
+            if text_encoder is None
+            else text_encoder
+        )
+        self.vae = (
+            WanVAEWrapper(checkpoint_path=args.vae_checkpoint_path) if vae is None else vae
+        )
 
         # Step 2: Initialize all bidirectional wan hyperparmeters
         self.scheduler = self.generator.get_scheduler()

@@ -4,6 +4,7 @@ import time
 
 from utils.logging import (
     _configure_logging,
+    log_environment_versions,
     string_to_logging_level,
 )
 
@@ -41,8 +42,7 @@ import sys
 sys.argv.extend(
     [
         "--output_folder",
-        f"outputs/{output_latent_frame_number}-{config_name}-seed{seed}",
-        # f"outputs-test/{output_latent_frame_number}-{config_name}",
+        f"outputs/inference/{output_latent_frame_number}-{config_name}-seed{seed}",
         "--config_dir",
         "configs",
         "--config_name",
@@ -131,6 +131,7 @@ _configure_logging(
     logdir / f"inference-{time_str}.log",
     logging_level=string_to_logging_level(config.logging_level),
 )
+log_environment_versions()
 
 # Initialize pipeline
 if hasattr(config, "denoising_step_list"):

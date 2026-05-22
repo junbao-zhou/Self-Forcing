@@ -18,6 +18,7 @@ from utils.logging import (
     _current_node_rank,
     _current_process_rank,
     _configure_logging,
+    log_environment_versions,
     string_to_logging_level,
 )
 
@@ -50,6 +51,7 @@ def main(
         logdir / f"train-node{_current_node_rank()}-rank{_current_process_rank()}.log",
         logging_level=string_to_logging_level(config.logging_level),
     )
+    log_environment_versions()
 
     logging.info(
         f"""

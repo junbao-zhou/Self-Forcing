@@ -50,7 +50,7 @@ config = OmegaConf.load(args.config_path)
 default_config = OmegaConf.load("configs/default_config.yaml")
 config = OmegaConf.merge(default_config, config)
 
-text_encoder = WanTextEncoder()
+text_encoder = WanTextEncoder(checkpoint_path=config.text_encoder_checkpoint_path)
 
 # Global variables for dynamic model switching
 current_vae_decoder = None
@@ -130,7 +130,7 @@ def initialize_vae_decoder(use_taehv=False, use_trt=False):
 # Initialize with default VAE
 vae_decoder = initialize_vae_decoder(use_taehv=False, use_trt=args.trt)
 
-transformer = WanDiffusionWrapper(is_causal=True)
+transformer = WanDiffusionWrapper(config_path=config.generator_config_path, is_causal=True)
 state_dict = torch.load(args.checkpoint_path, map_location="cpu")
 transformer.load_state_dict(state_dict["generator_ema"])
 

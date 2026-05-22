@@ -34,22 +34,31 @@ class BaseModel(nn.Module):
                 self.denoising_step_list = timesteps[1000 - self.denoising_step_list]
 
     def _initialize_models(self, args, device):
-        self.real_model_name = getattr(args, "real_name", "Wan2.1-T2V-1.3B")
-        self.fake_model_name = getattr(args, "fake_name", "Wan2.1-T2V-1.3B")
-
-        self.generator = WanDiffusionWrapper(**getattr(args, "model_kwargs", {}), is_causal=True)
+        self.generator = WanDiffusionWrapper(
+            config_path=args.generator_config_path,
+            **getattr(args, "model_kwargs", {}),
+            is_causal=True,
+        )
         self.generator.model.requires_grad_(True)
 
-        self.real_score = WanDiffusionWrapper(model_name=self.real_model_name, is_causal=False)
+        self.real_score = WanDiffusionWrapper(
+            config_path=args.real_score_config_path,
+            checkpoint_path=args.real_score_checkpoint_path,
+            is_causal=False,
+        )
         self.real_score.model.requires_grad_(False)
 
-        self.fake_score = WanDiffusionWrapper(model_name=self.fake_model_name, is_causal=False)
+        self.fake_score = WanDiffusionWrapper(
+            config_path=args.fake_score_config_path,
+            checkpoint_path=args.fake_score_checkpoint_path,
+            is_causal=False,
+        )
         self.fake_score.model.requires_grad_(True)
 
-        self.text_encoder = WanTextEncoder()
+        self.text_encoder = WanTextEncoder(checkpoint_path=args.text_encoder_checkpoint_path)
         self.text_encoder.requires_grad_(False)
 
-        self.vae = WanVAEWrapper()
+        self.vae = WanVAEWrapper(checkpoint_path=args.vae_checkpoint_path)
         self.vae.requires_grad_(False)
 
         self.scheduler = self.generator.get_scheduler()

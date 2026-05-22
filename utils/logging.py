@@ -1,11 +1,14 @@
 
 
 import logging
+from importlib.metadata import distributions
 from pathlib import Path
 import sys
 import time
 import torch.distributed as dist
 import os
+import platform
+import torch
 
 
 _LOGGING_SRCFILE = logging._srcfile
@@ -133,6 +136,46 @@ def _configure_logging(
     root.handlers[:] = [file_handler, stream_handler]
 
     _install_excepthooks()
+
+
+def _installed_package_versions() -> str:
+    package_versions: dict[str, str] = {}
+    for distribution in distributions():
+        package_name = distribution.metadata.get("Name")
+        if package_name is None:
+            continue
+        package_versions[package_name] = distribution.version
+
+    return "\n".join(
+        f"{package_name}=={package_versions[package_name]}"
+        for package_name in sorted(package_versions, key=str.lower)
+    )
+
+
+def log_environment_versions() -> None:
+    """
+    Log runtime information and all installed Python package versions.
+    """
+    cuda_device_summary = "unavailable"
+    if torch.cuda.is_available():
+        current_device = torch.cuda.current_device()
+        cuda_device_summary = (
+            f"index={current_device}, "
+            f"name={torch.cuda.get_device_name(current_device)}, "
+            f"capability={torch.cuda.get_device_capability(current_device)}"
+        )
+
+    logging.info(
+        f"""
+[environment versions]
+python={sys.version.split()[0]}, executable={sys.executable}
+platform={platform.platform()}
+torch={torch.__version__}, torch_cuda={torch.version.cuda}, cudnn={torch.backends.cudnn.version()}
+cuda_available={torch.cuda.is_available()}, cuda_device={cuda_device_summary}
+installed_packages:
+{_installed_package_versions()}
+"""
+    )
 
 
 def string_to_logging_level(

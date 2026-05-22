@@ -24,6 +24,7 @@ class ODERegression(BaseModel):
         # Step 1: Initialize all models
 
         self.generator = WanDiffusionWrapper(
+            config_path=args.generator_config_path,
             **getattr(args, "model_kwargs", {}),
             is_causal=True,
         )
@@ -52,13 +53,17 @@ class ODERegression(BaseModel):
         self.timestep_shift = getattr(args, "timestep_shift", 1.0)
 
     def _initialize_models(self, args):
-        self.generator = WanDiffusionWrapper(**getattr(args, "model_kwargs", {}), is_causal=True)
+        self.generator = WanDiffusionWrapper(
+            config_path=args.generator_config_path,
+            **getattr(args, "model_kwargs", {}),
+            is_causal=True,
+        )
         self.generator.model.requires_grad_(True)
 
-        self.text_encoder = WanTextEncoder()
+        self.text_encoder = WanTextEncoder(checkpoint_path=args.text_encoder_checkpoint_path)
         self.text_encoder.requires_grad_(False)
 
-        self.vae = WanVAEWrapper()
+        self.vae = WanVAEWrapper(checkpoint_path=args.vae_checkpoint_path)
         self.vae.requires_grad_(False)
 
     @torch.no_grad()

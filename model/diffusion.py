@@ -49,15 +49,16 @@ class CausalDiffusion(SelfForcingModel):
         # Override SelfForcingModel/BaseModel to skip real_score and fake_score:
         # this trainer has no distillation, so those modules would just waste memory.
         self.generator = WanDiffusionWrapper(
+            config_path=args.generator_config_path,
             **getattr(args, "model_kwargs", {}),
             is_causal=True,
         )
         self.generator.model.requires_grad_(True)
 
-        self.text_encoder = WanTextEncoder()
+        self.text_encoder = WanTextEncoder(checkpoint_path=args.text_encoder_checkpoint_path)
         self.text_encoder.requires_grad_(False)
 
-        self.vae = WanVAEWrapper()
+        self.vae = WanVAEWrapper(checkpoint_path=args.vae_checkpoint_path)
         self.vae.requires_grad_(False)
 
         self.scheduler = self.generator.get_scheduler()

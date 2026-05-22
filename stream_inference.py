@@ -1,6 +1,5 @@
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 import argparse
 from pathlib import Path
 import time
@@ -21,6 +20,11 @@ from pipeline import (
     CausalInferencePipeline,
 )
 from utils.dataset import TextDataset, TextImagePairDataset
+from utils.logging import (
+    _configure_logging,
+    log_environment_versions,
+    string_to_logging_level,
+)
 from utils.misc import set_seed
 from hydra import initialize, compose
 from hydra.core.global_hydra import GlobalHydra
@@ -271,8 +275,9 @@ def main():
 
     seed = 42
     set_seed(seed)
+    max_video_num = 5
 
-    output_folder = "outputs-stream"
+    output_folder = "outputs/stream-inference"
     output_folder = f"{output_folder}/blk{output_block_number}-{stream_config_name}-seed{seed}"
 
     print(f"Free VRAM {get_cuda_free_memory_gb(gpu)} GB")
@@ -295,6 +300,13 @@ def main():
         stream_config = compose(config_name=stream_config_name)
     print(f"{stream_config = }")
 
+    time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
+    _configure_logging(
+        Path(output_folder) / f"stream-inference-{time_str}.log",
+        logging_level=string_to_logging_level(stream_config.logging_level),
+    )
+    log_environment_versions()
+
     stream_inference = StreamInferenceWrapper(
         stream_model_config=stream_config,
         checkpoint_path="./checkpoints/self_forcing_dmd.pt",
@@ -305,6 +317,8 @@ def main():
 
     for i, batch_data in tqdm(enumerate(dataloader)):
         idx = batch_data["idx"].item()
+        if max_video_num != -1 and idx >= max_video_num:
+            break
         print(f"{idx = }")
 
         # For DataLoader batch_size=1, the batch_data is already a single item, but in a batch container

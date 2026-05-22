@@ -28,14 +28,21 @@ class CausalDiffusionInferencePipeline(torch.nn.Module):
         # Step 1: Initialize all models
         self.generator = (
             WanDiffusionWrapper(
+                config_path=args.generator_config_path,
                 **getattr(args, "model_kwargs", {}),
                 is_causal=True,
             )
             if generator is None
             else generator
         )
-        self.text_encoder = WanTextEncoder() if text_encoder is None else text_encoder
-        self.vae = WanVAEWrapper() if vae is None else vae
+        self.text_encoder = (
+            WanTextEncoder(checkpoint_path=args.text_encoder_checkpoint_path)
+            if text_encoder is None
+            else text_encoder
+        )
+        self.vae = (
+            WanVAEWrapper(checkpoint_path=args.vae_checkpoint_path) if vae is None else vae
+        )
 
         # Step 2: Initialize scheduler
         self.num_train_timesteps = args.num_train_timestep

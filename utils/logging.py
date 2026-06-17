@@ -15,6 +15,11 @@ _LOGGING_SRCFILE = logging._srcfile
 _THIS_SRCFILE = os.path.normcase(__file__)
 
 
+# Project-global logger. Other modules import this instead of touching the
+# root logger, so we never fight Hydra (or any library) over root handlers.
+logger = logging.getLogger("self_forcing")
+
+
 def _caller_class_name() -> str:
     # Avoid materializing frame.f_locals unless the first argument is `self`/`cls`.
     # `co_varnames` is a static attribute on the code object, reading it is free.
@@ -81,7 +86,7 @@ def _install_excepthooks():
             # Keep Ctrl-C behavior: don't spam logs, fall back to default.
             sys.__excepthook__(exc_type, exc_value, exc_tb)
             return
-        logging.critical(
+        logger.critical(
             "Uncaught exception",
             exc_info=(exc_type, exc_value, exc_tb),
         )
@@ -93,7 +98,7 @@ def _install_excepthooks():
     def _log_thread_exc(args):
         if issubclass(args.exc_type, SystemExit):
             return
-        logging.critical(
+        logger.critical(
             f"Uncaught exception in thread {args.thread.name}",
             exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
@@ -101,7 +106,7 @@ def _install_excepthooks():
 
     # Unraisable exceptions (e.g. errors in __del__, weakref callbacks)
     def _log_unraisable(unraisable):
-        logging.error(
+        logger.error(
             f"Unraisable exception: {unraisable.err_msg or ''}",
             exc_info=(unraisable.exc_type, unraisable.exc_value, unraisable.exc_traceback),
         )
@@ -113,8 +118,9 @@ def _configure_logging(
     logging_level=logging.INFO,
 ):
     """
-    Hydra installs its own logging handlers before main() runs.
-    This function forcefully replaces them so our file + format take effect.
+    Configure the project-global `logger` with our file + stream handlers and
+    format. We deliberately do NOT touch the root logger, so Hydra's own root
+    handlers are left alone; our logger does not propagate to them.
     """
     _add_extra_fields_to_record()
 
@@ -130,10 +136,10 @@ def _configure_logging(
         handler.setLevel(logging_level)
         handler.setFormatter(fmt)
 
-    # Replace existing handlers (Hydra already configured them)
-    root = logging.getLogger()
-    root.setLevel(logging_level)
-    root.handlers[:] = [file_handler, stream_handler]
+    logger.setLevel(logging_level)
+    logger.handlers[:] = [file_handler, stream_handler]
+    # Don't bubble up to the root logger (avoids double emission via Hydra).
+    logger.propagate = False
 
     _install_excepthooks()
 
@@ -165,7 +171,7 @@ def log_environment_versions() -> None:
             f"capability={torch.cuda.get_device_capability(current_device)}"
         )
 
-    logging.info(
+    logger.info(
         f"""
 [environment versions]
 python={sys.version.split()[0]}, executable={sys.executable}

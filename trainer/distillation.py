@@ -1,5 +1,5 @@
 import gc
-import logging
+from utils.logging import logger
 
 from utils.dataset import ShardingLMDBDataset, cycle
 from utils.dataset import TextDataset
@@ -111,7 +111,7 @@ class Trainer(BaseTrainer):
             num_workers=8,
         )
 
-        logging.info("DATASET SIZE %d" % len(dataset))
+        logger.info("DATASET SIZE %d" % len(dataset))
         self.dataloader = cycle(dataloader)
 
         ##############################################################################################################
@@ -131,13 +131,13 @@ class Trainer(BaseTrainer):
         ema_weight = config.ema_weight
         self.generator_ema = None
         if (ema_weight is not None) and (ema_weight > 0.0):
-            logging.info(f"Setting up EMA with weight {ema_weight}")
+            logger.info(f"Setting up EMA with weight {ema_weight}")
             self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
 
         ##############################################################################################################
         # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
         if getattr(config, "generator_ckpt", False):
-            logging.info(f"Loading pretrained generator from {config.generator_ckpt}")
+            logger.info(f"Loading pretrained generator from {config.generator_ckpt}")
             state_dict = torch.load(config.generator_ckpt, map_location="cpu")
             if "generator" in state_dict:
                 state_dict = state_dict["generator"]
@@ -158,7 +158,7 @@ class Trainer(BaseTrainer):
     def save(
         self,
     ):
-        logging.info("Start gathering distributed model states...")
+        logger.info("Start gathering distributed model states...")
         generator_state_dict = fsdp_state_dict(self.model.generator)
         critic_state_dict = fsdp_state_dict(self.model.fake_score)
 
@@ -181,7 +181,7 @@ class Trainer(BaseTrainer):
         batch,
         train_generator,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {batch = }
     {train_generator = }
@@ -204,8 +204,8 @@ class Trainer(BaseTrainer):
         else:
             clean_latent = None
             image_latent = None
-        logging.debug(f"{clean_latent is None = }")
-        logging.debug(f"{image_latent is None = }")
+        logger.debug(f"{clean_latent is None = }")
+        logger.debug(f"{image_latent is None = }")
 
         batch_size = len(text_prompts)
         image_or_video_shape = list(self.config.image_or_video_shape)
@@ -226,7 +226,7 @@ class Trainer(BaseTrainer):
 
         # Step 3: Store gradients for the generator (if training the generator)
         if train_generator:
-            logging.debug(f"Training generator")
+            logger.debug(f"Training generator")
             generator_loss, generator_log_dict = self.model.generator_loss(
                 image_or_video_shape=image_or_video_shape,
                 conditional_dict=conditional_dict,
@@ -248,7 +248,7 @@ class Trainer(BaseTrainer):
             return generator_log_dict
         else:
             generator_log_dict = {}
-            logging.debug(f"Not training generator")
+            logger.debug(f"Not training generator")
 
         # Step 4: Store gradients for the critic (if training the critic)
         critic_loss, critic_log_dict = self.model.critic_loss(

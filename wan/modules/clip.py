@@ -1,6 +1,6 @@
 # Modified from ``https://github.com/openai/CLIP'' and ``https://github.com/mlfoundations/open_clip''
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
-import logging
+from utils.logging import logger
 import math
 
 import torch
@@ -551,7 +551,7 @@ class CLIPModel:
             device=device,
         )
         self.model = self.model.eval().requires_grad_(False)
-        logging.info(f"loading {checkpoint_path}")
+        logger.info(f"loading {checkpoint_path}")
         self.model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
 
         # init tokenizer

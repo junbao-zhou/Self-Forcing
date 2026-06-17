@@ -1,5 +1,6 @@
 import gc
 import logging
+from utils.logging import logger
 
 from model import CausalDiffusion
 from utils.dataset import OpenVidDataset, OpenVidLatentDataset, cycle
@@ -23,7 +24,7 @@ class Trainer(BaseTrainer):
         self,
         config,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {config = }
 """
@@ -154,7 +155,7 @@ class Trainer(BaseTrainer):
         self,
         batch,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {self.step = }
     {batch.keys() = }
@@ -172,18 +173,18 @@ class Trainer(BaseTrainer):
             clean_latent = batch["ode_latent"][:, -1].to(device=self.device, dtype=self.dtype)
         else:  # encode raw video to latent
             frames = batch["frames"].to(device=self.device, dtype=self.dtype)
-            logging.debug(f"{frames.shape = }")
+            logger.debug(f"{frames.shape = }")
             with torch.no_grad():
                 clean_latent = self.model.vae.encode_to_latent(frames).to(
                     device=self.device, dtype=self.dtype
                 )
 
-        logging.debug(f"{clean_latent.shape = }")
+        logger.debug(f"{clean_latent.shape = }")
         image_latent = clean_latent[
             :,
             0:1,
         ]
-        logging.debug(f"{image_latent.shape = }")
+        logger.debug(f"{image_latent.shape = }")
 
         batch_size = len(text_prompts)
         image_or_video_shape = list(self.config.image_or_video_shape)
@@ -203,7 +204,7 @@ class Trainer(BaseTrainer):
                 unconditional_dict = self.unconditional_dict
 
         # Step 3: Train the generator
-        logging.debug(f"Start generator_loss computation")
+        logger.debug(f"Start generator_loss computation")
         generator_loss, log_dict = self.model.generator_loss(
             image_or_video_shape=image_or_video_shape,
             conditional_dict=conditional_dict,

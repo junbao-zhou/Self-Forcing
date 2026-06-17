@@ -1,4 +1,4 @@
-import logging
+from utils.logging import logger
 
 from utils.wan_wrapper import WanDiffusionWrapper
 from utils.scheduler import SchedulerInterface
@@ -76,7 +76,7 @@ class SelfForcingTrainingPipeline:
         return_sim_step: bool = False,
         **conditional_dict
     ) -> torch.Tensor:
-        logging.debug(f"""
+        logger.debug(f"""
     {noise.shape = },
     initial_latent = {None if initial_latent is None else initial_latent.shape}
 """)
@@ -94,7 +94,7 @@ class SelfForcingTrainingPipeline:
             assert (num_frames - 1) % self.num_frame_per_block == 0
             num_blocks = (num_frames - 1) // self.num_frame_per_block
 
-        logging.debug(f"Computed {num_blocks=}, {num_frames=}, {self.num_frame_per_block=}")
+        logger.debug(f"Computed {num_blocks=}, {num_frames=}, {self.num_frame_per_block=}")
 
         num_input_frames = initial_latent.shape[1] if initial_latent is not None else 0
         num_output_frames = num_frames + num_input_frames  # add the initial latent frames
@@ -148,7 +148,7 @@ class SelfForcingTrainingPipeline:
             len(all_num_frames), num_denoising_steps, device=noise.device
         )
 
-        logging.debug(f"After generate_and_sync_list: {exit_flags = }, {len(exit_flags) = }")
+        logger.debug(f"After generate_and_sync_list: {exit_flags = }, {len(exit_flags) = }")
 
         if len(exit_flags) == 0:
             raise RuntimeError(f"exit_flags is empty! {num_blocks = }, {all_num_frames = }")
@@ -156,7 +156,7 @@ class SelfForcingTrainingPipeline:
         start_gradient_frame_index = num_output_frames - 21
 
         # for block_index in range(num_blocks):
-        logging.debug(f"Starting generating blocks, {num_blocks=}, {len(all_num_frames)=}, {exit_flags=}")
+        logger.debug(f"Starting generating blocks, {num_blocks=}, {len(all_num_frames)=}, {exit_flags=}")
         for block_index, current_num_frames in enumerate(all_num_frames):
             noisy_input = noise[
                 :,
@@ -165,19 +165,19 @@ class SelfForcingTrainingPipeline:
                 + current_num_frames
                 - num_input_frames,
             ]
-            logging.debug(f"{block_index = }, {current_num_frames = }, {noisy_input.shape = }, {current_start_frame = }, {num_input_frames = }")
+            logger.debug(f"{block_index = }, {current_num_frames = }, {noisy_input.shape = }, {current_start_frame = }, {num_input_frames = }")
 
             # Step 3.1: Spatial denoising loop
             for index, current_timestep in enumerate(self.denoising_step_list):
-                logging.debug(f"timestep index = {index}, {current_timestep = }")
-                logging.debug(f"{self.same_step_across_blocks = }")
+                logger.debug(f"timestep index = {index}, {current_timestep = }")
+                logger.debug(f"{self.same_step_across_blocks = }")
                 if self.same_step_across_blocks:
                     exit_flag = index == exit_flags[0]
                 else:
                     exit_flag = (
                         index == exit_flags[block_index]
                     )  # Only backprop at the randomly selected timestep (consistent across all ranks)
-                logging.debug(f"{exit_flag = }")
+                logger.debug(f"{exit_flag = }")
                 timestep = (
                     torch.ones(
                         [batch_size, current_num_frames],
@@ -188,7 +188,7 @@ class SelfForcingTrainingPipeline:
                 )
 
                 if not exit_flag:
-                    logging.debug(f"No exit at this step, running with torch.no_grad()")
+                    logger.debug(f"No exit at this step, running with torch.no_grad()")
                     with torch.no_grad():
                         _, denoised_pred = self.generator(
                             noisy_image_or_video=noisy_input,
@@ -210,11 +210,11 @@ class SelfForcingTrainingPipeline:
                             ),
                         ).unflatten(0, denoised_pred.shape[:2])
                 else:
-                    logging.debug(f"Exit at this step")
+                    logger.debug(f"Exit at this step")
                     # for getting real output
                     # with torch.set_grad_enabled(current_start_frame >= start_gradient_frame_index):
                     if current_start_frame < start_gradient_frame_index:
-                        logging.debug(f"{current_start_frame = } < {start_gradient_frame_index = }, running with torch.no_grad()")
+                        logger.debug(f"{current_start_frame = } < {start_gradient_frame_index = }, running with torch.no_grad()")
                         with torch.no_grad():
                             _, denoised_pred = self.generator(
                                 noisy_image_or_video=noisy_input,
@@ -225,7 +225,7 @@ class SelfForcingTrainingPipeline:
                                 current_start=current_start_frame * self.frame_seq_length,
                             )
                     else:
-                        logging.debug(f"{current_start_frame = } >= {start_gradient_frame_index = }, running with gradients enabled")
+                        logger.debug(f"{current_start_frame = } >= {start_gradient_frame_index = }, running with gradients enabled")
                         _, denoised_pred = self.generator(
                             noisy_image_or_video=noisy_input,
                             conditional_dict=conditional_dict,
@@ -243,7 +243,7 @@ class SelfForcingTrainingPipeline:
             ] = denoised_pred
 
             # Step 3.3: rerun with timestep zero to update the cache
-            logging.debug(f"{self.context_noise = }")
+            logger.debug(f"{self.context_noise = }")
             context_timestep = (
                 torch.ones(
                     [batch_size, current_num_frames],
@@ -263,7 +263,7 @@ class SelfForcingTrainingPipeline:
                     dtype=torch.long,
                 ),
             ).unflatten(0, denoised_pred.shape[:2])
-            logging.debug(f"Rerunning the model with {context_timestep[0,0].item() = } to update the cache")
+            logger.debug(f"Rerunning the model with {context_timestep[0,0].item() = } to update the cache")
             with torch.no_grad():
                 self.generator(
                     noisy_image_or_video=denoised_pred,
@@ -278,13 +278,13 @@ class SelfForcingTrainingPipeline:
             current_start_frame += current_num_frames
 
         # Step 3.5: Return the denoised timestep
-        logging.debug(f"Computing denoised_timestep")
+        logger.debug(f"Computing denoised_timestep")
 
         if not self.same_step_across_blocks:
-            logging.debug(f"{self.same_step_across_blocks = }")
+            logger.debug(f"{self.same_step_across_blocks = }")
             denoised_timestep_from, denoised_timestep_to = None, None
         elif exit_flags[0] == len(self.denoising_step_list) - 1:
-            logging.debug(f"{exit_flags[0] = } == {len(self.denoising_step_list) - 1 = }")
+            logger.debug(f"{exit_flags[0] = } == {len(self.denoising_step_list) - 1 = }")
             denoised_timestep_to = 0
             denoised_timestep_from = (
                 1000
@@ -318,7 +318,7 @@ class SelfForcingTrainingPipeline:
                 ).item()
             )
 
-        logging.debug(f"Computed {denoised_timestep_from = }, {denoised_timestep_to = }")
+        logger.debug(f"Computed {denoised_timestep_from = }, {denoised_timestep_to = }")
 
         if return_sim_step:
             return (
@@ -399,7 +399,7 @@ class SelfForcingTrainingPipeline:
         the tensor a leaf again, which is why this is the original author's
         reason for not enabling lazy KV-cache reset.
         """
-        logging.debug(f"{type(self).__name__}._reset_kv_cache")
+        logger.debug(f"{type(self).__name__}._reset_kv_cache")
         for block_index in range(len(self.kv_cache1)):
             cache = self.kv_cache1[block_index]
             for key in ("k", "v"):
@@ -419,7 +419,7 @@ class SelfForcingTrainingPipeline:
         as `_reset_kv_cache`: detach lingering autograd links first, then keep
         and zero the buffers, flip is_init, scrub grads.
         """
-        logging.debug(f"{type(self).__name__}._reset_crossattn_cache")
+        logger.debug(f"{type(self).__name__}._reset_crossattn_cache")
         for block_index in range(self.num_transformer_blocks):
             cache = self.crossattn_cache[block_index]
             for key in ("k", "v"):

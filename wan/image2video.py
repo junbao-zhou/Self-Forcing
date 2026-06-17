@@ -1,6 +1,6 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
 import gc
-import logging
+from utils.logging import logger
 import math
 import os
 import random
@@ -99,7 +99,7 @@ class WanI2V:
             tokenizer_path=os.path.join(checkpoint_dir, config.clip_tokenizer),
         )
 
-        logging.info(f"Creating WanModel from {checkpoint_dir}")
+        logger.info(f"Creating WanModel from {checkpoint_dir}")
         self.model = WanModel.from_pretrained(checkpoint_dir)
         self.model.eval().requires_grad_(False)
 

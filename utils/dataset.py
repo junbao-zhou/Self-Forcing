@@ -9,7 +9,7 @@ from PIL import Image
 import os
 import csv
 import cv2
-import logging
+from utils.logging import logger
 
 
 def parse_latent_frame_count_from_shape(shape_text: str) -> int:
@@ -255,7 +255,7 @@ class OpenVidDataset(Dataset):
         height: int = 480,
         width: int = 832,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {video_folder = },
     {csv_path = },
@@ -328,7 +328,7 @@ class OpenVidLatentDataset(Dataset):
         max_pair: int = int(1e8),
         num_latent_frames: int = None,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {latent_folder = },
     {csv_path = },
@@ -355,7 +355,7 @@ class OpenVidLatentDataset(Dataset):
                 samples.append((row["filename"], row["caption"], file_num_latent_frames))
             self.samples = samples
         self.samples = self.samples[:max_pair]
-        logging.info(
+        logger.info(
             f"OpenVidLatentDataset loaded {len(self.samples)} samples "
             f"(num_latent_frames={num_latent_frames}, max_pair={max_pair})"
         )

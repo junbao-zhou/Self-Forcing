@@ -1,6 +1,6 @@
 # Modified from transformers.models.t5.modeling_t5
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
-import logging
+from utils.logging import logger
 import math
 
 import torch
@@ -556,7 +556,7 @@ class T5EncoderModel:
             .eval()
             .requires_grad_(False)
         )
-        logging.info(f"loading {checkpoint_path}")
+        logger.info(f"loading {checkpoint_path}")
         model.load_state_dict(torch.load(checkpoint_path, map_location="cpu"))
         self.model = model
         if shard_fn is not None:

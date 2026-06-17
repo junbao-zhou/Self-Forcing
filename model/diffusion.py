@@ -1,4 +1,4 @@
-import logging
+from utils.logging import logger
 from typing import Tuple
 import torch
 import torch.nn.functional as F
@@ -82,7 +82,7 @@ class CausalDiffusion(SelfForcingModel):
             - clean_latent: dataset ground-truth latent, shape [B, F, C, H, W].
             - initial_latent: i2v image latent; ignored when args.i2v is False.
         """
-        logging.debug(
+        logger.debug(
             f"""
     {image_or_video_shape = },
     {conditional_dict.keys() = },
@@ -98,7 +98,7 @@ class CausalDiffusion(SelfForcingModel):
             conditional_dict=conditional_dict,
             initial_latent=initial_latent if self.args.i2v else None,
         )
-        logging.debug(
+        logger.debug(
             f"_run_generator -> {pred_image.shape = }, {gradient_mask is None = }"
         )
 

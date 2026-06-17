@@ -1,4 +1,5 @@
 import logging
+from utils.logging import logger
 from wan.modules.attention import attention
 from wan.modules.model import (
     WanRMSNorm,
@@ -168,21 +169,35 @@ class CausalWanSelfAttention(nn.Module):
 
         q, k, v = qkv_fn(x)
 
+        # logger.debug(f"{grid_sizes = }")
         frame_seqlen = math.prod(grid_sizes[0][1:]).item()
+        # logger.debug(f"{frame_seqlen = }")
         current_start_frame = current_start // frame_seqlen
+        logger.debug(f"{current_start_frame = }")
+        # logger.debug(f"{q.shape = }")
+        # logger.debug(f"{freqs.shape = }")
         roped_query = causal_rope_apply(
             q, grid_sizes, freqs, start_frame=current_start_frame
         ).type_as(v)
+        logger.debug(f"{roped_query.shape = }")
         roped_key = causal_rope_apply(
             k, grid_sizes, freqs, start_frame=current_start_frame
         ).type_as(v)
+        # logger.debug(f"{roped_key.shape = }")
 
         current_end = current_start + roped_query.shape[1]
         # current_end 是逻辑上的， 表示当前 chunk 的 token 在整个视频序列中的结束位置， 可能超过 kv cache size
+        logger.debug(f"{current_end = }")
         sink_tokens = self.sink_size * frame_seqlen
+        # logger.debug(f"{sink_tokens = }")
         # If we are using local attention and the current KV cache size is larger than the local attention size, we need to truncate the KV cache
         kv_cache_size = kv_cache["k"].shape[1]
+        logger.debug(f"{kv_cache_size = }")
         num_new_tokens = roped_query.shape[1]
+        # logger.debug(f"{num_new_tokens = }")
+        logger.debug(
+            f"{kv_cache['local_end_index'].item() = }, {kv_cache['global_end_index'].item() = }"
+        )
         # kv_cache['local_end_index'] 表示当前 KV cache 中最后一个 token 的位置， 这是物理上的， 不会超过 kv cache size
         # kv_cache['global_end_index'] 表示当前 KV cache 中最后一个 token 在整个视频序列中的位置， 这是逻辑上的， 可能超过 kv cache size
         if (
@@ -194,9 +209,11 @@ class CausalWanSelfAttention(nn.Module):
             # Shift existing cache content left to discard oldest tokens
             # Clone the source slice to avoid overlapping memory error
             num_evicted_tokens = num_new_tokens + kv_cache["local_end_index"].item() - kv_cache_size
+            # logger.debug(f"{num_evicted_tokens = }")
             num_rolled_tokens = (
                 kv_cache["local_end_index"].item() - num_evicted_tokens - sink_tokens
             )
+            # logger.debug(f"{num_rolled_tokens = }")
             kv_cache["k"][:, sink_tokens : sink_tokens + num_rolled_tokens] = kv_cache["k"][
                 :,
                 sink_tokens + num_evicted_tokens : kv_cache["local_end_index"].item(),
@@ -219,7 +236,9 @@ class CausalWanSelfAttention(nn.Module):
                 + current_end
                 - kv_cache["global_end_index"].item()
             )
+        # logger.debug(f"{local_end_index = }")
         local_start_index = local_end_index - num_new_tokens
+        # logger.debug(f"{local_start_index = }")
         kv_cache["k"][:, local_start_index:local_end_index] = roped_key
         kv_cache["v"][:, local_start_index:local_end_index] = v
         x = attention(
@@ -312,7 +331,12 @@ class CausalWanAttentionBlock(nn.Module):
         num_frames, frame_seqlen = e.shape[1], x.shape[1] // e.shape[1]
         # assert e.dtype == torch.float32
         # with amp.autocast(dtype=torch.float32):
+        # logger.debug(f"{e.shape = }")
+        # logger.debug(f"{e = }")
         e = (self.modulation.unsqueeze(1) + e).chunk(6, dim=2)
+        # logger.debug(f"{len(e) = }")
+        # logger.debug(f"{e[0].shape = }")
+        # logger.debug(f"{e[0] = }")
         # assert e[0].dtype == torch.float32
 
         # self-attention
@@ -522,6 +546,11 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             dim=1,
         )
         # self.freqs.shape = [1024, 64]
+        logger.debug(
+            f"""
+    {self.freqs.shape = }
+"""
+        )
 
         if model_type == "i2v":
             self.img_emb = MLPProj(1280, dim)
@@ -840,7 +869,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
-        logging.debug(
+        logger.debug(
             f""""""
         )
 
@@ -870,8 +899,11 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         # time embeddings
         # with amp.autocast(dtype=torch.float32):
+        # logger.debug(f"{t = }")
         e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).type_as(x))
         e0 = self.time_projection(e).unflatten(1, (6, self.dim)).unflatten(dim=0, sizes=t.shape)
+        # logger.debug(f"{e = }")
+        # logger.debug(f"{e0 = }")
         # assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
         # context
@@ -975,7 +1007,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
-        logging.debug(
+        logger.debug(
             f""""""
         )
         if self.model_type == "i2v":
@@ -1139,7 +1171,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         return torch.stack(x)
 
     def forward(self, *args, **kwargs):
-        logging.debug(
+        logger.debug(
             f""""""
         )
         if kwargs.get("kv_cache", None) is not None:

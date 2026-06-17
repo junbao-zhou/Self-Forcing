@@ -1,4 +1,4 @@
-import logging
+from utils.logging import logger
 from typing import Tuple
 from einops import rearrange
 from torch import nn
@@ -143,7 +143,7 @@ class SelfForcingModel(BaseModel):
             - pred_image: a tensor with shape [B, F, C, H, W].
             - denoised_timestep: an integer
         """
-        logging.debug(f"""
+        logger.debug(f"""
     {image_or_video_shape=},
     {conditional_dict.keys()=},
     initial_latent={None if initial_latent is None else initial_latent.shape},
@@ -181,14 +181,14 @@ class SelfForcingModel(BaseModel):
         dist.broadcast(num_generated_blocks, src=0)
         num_generated_blocks = num_generated_blocks.item()
         num_generated_frames = num_generated_blocks * self.num_frame_per_block
-        logging.debug(f"{num_generated_frames=}")
+        logger.debug(f"{num_generated_frames=}")
         if self.args.independent_first_frame and initial_latent is None:
             num_generated_frames += 1
             min_num_frames += 1
-            logging.debug(f"Adjusted for independent first frame: {num_generated_frames=}, {min_num_frames=}")
+            logger.debug(f"Adjusted for independent first frame: {num_generated_frames=}, {min_num_frames=}")
         # Sync num_generated_frames across all processes
         noise_shape[1] = num_generated_frames
-        logging.debug(f"{noise_shape=}")
+        logger.debug(f"{noise_shape=}")
 
         pred_image_or_video, denoised_timestep_from, denoised_timestep_to = (
             self._consistency_backward_simulation(
@@ -196,7 +196,7 @@ class SelfForcingModel(BaseModel):
                 **conditional_dict,
             )
         )
-        logging.debug(f"Completed backward simulation with {pred_image_or_video.shape=}, {denoised_timestep_from=}, {denoised_timestep_to=}")
+        logger.debug(f"Completed backward simulation with {pred_image_or_video.shape=}, {denoised_timestep_from=}, {denoised_timestep_to=}")
         # Slice last 21 frames
         if pred_image_or_video.shape[1] > 21:
             with torch.no_grad():
@@ -249,7 +249,7 @@ class SelfForcingModel(BaseModel):
             T is the total number of timesteps. output[0] is a pure noise and output[i] and i>0
             represents the x0 prediction at each timestep.
         """
-        logging.debug(f"""
+        logger.debug(f"""
     {noise.shape = },
     {conditional_dict.keys() = },
 """)

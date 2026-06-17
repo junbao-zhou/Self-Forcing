@@ -15,6 +15,7 @@ import csv
 import os
 
 from utils.logging import (
+    logger,
     _current_node_rank,
     _current_process_rank,
     _configure_logging,
@@ -90,17 +91,17 @@ def existing_latent_is_valid(output_path: Path, expected_shape: tuple[int, ...])
     try:
         data = torch.load(output_path, map_location="cpu", mmap=True, weights_only=False)
     except Exception as error:
-        logging.info(f"Recomputing {output_path}: load failed ({error})")
+        logger.info(f"Recomputing {output_path}: load failed ({error})")
         return False
     if not isinstance(data, dict) or "latent" not in data or "caption" not in data:
-        logging.info(f"Recomputing {output_path}: bad keys")
+        logger.info(f"Recomputing {output_path}: bad keys")
         return False
     latent = data["latent"]
     if not torch.is_tensor(latent):
-        logging.info(f"Recomputing {output_path}: latent is {type(latent)}")
+        logger.info(f"Recomputing {output_path}: latent is {type(latent)}")
         return False
     if tuple(latent.shape) != expected_shape:
-        logging.info(f"Recomputing {output_path}: shape {tuple(latent.shape)} != expected {expected_shape}")
+        logger.info(f"Recomputing {output_path}: shape {tuple(latent.shape)} != expected {expected_shape}")
         return False
     return True
 
@@ -155,13 +156,13 @@ def process_one(
         video_tensor = load_and_resize_frames(video_path, device, config)
         t1 = time.time()
     except Exception as e:
-        logging.info(f"Failed to read {video_path}: {e}")
+        logger.info(f"Failed to read {video_path}: {e}")
         return
 
     latent = model.encode_to_latent(video_tensor)
     # latent.shape = [1, F, C, H, W]
     t2 = time.time()
-    logging.info(
+    logger.info(
         f"load={t1-t0:.2f}s encode={t2-t1:.2f}s "
         f"{video_filename} {video_tensor.shape} -> {latent.shape}"
     )
@@ -217,7 +218,7 @@ def main() -> None:
             if line.strip()
         }
         if dist.get_rank() == 0:
-            logging.info(f"Filtering to {len(wanted_ids)} video ids from {config.video_id_list}")
+            logger.info(f"Filtering to {len(wanted_ids)} video ids from {config.video_id_list}")
 
     samples = load_samples(wanted_ids, config)
 
@@ -236,7 +237,7 @@ def main() -> None:
         orphan_tmp_files = list(config.output_folder.glob("*.pt.tmp.*"))
         for tmp_path in orphan_tmp_files:
             tmp_path.unlink()
-        logging.info(
+        logger.info(
             f"Cleared claims dir: {claims_dir}; "
             f"removed {len(orphan_tmp_files)} orphan tmp files"
         )
@@ -262,18 +263,18 @@ def main() -> None:
         t0 = time.time()
         is_skip_occupied_by_other = not try_claim_video(claims_dir, video_stem)
         t1 = time.time()
-        # logging.info(f"claim {video_stem} {t1-t0:.6f}s occupied_by_other={is_skip_occupied_by_other}")
+        # logger.info(f"claim {video_stem} {t1-t0:.6f}s occupied_by_other={is_skip_occupied_by_other}")
         if is_skip_occupied_by_other:
             continue
-        # logging.info(f"claimed {video_stem} in {t1-t0:.6f}s")
+        # logger.info(f"claimed {video_stem} in {t1-t0:.6f}s")
 
         is_skip_valid_existing = output_path.exists() and existing_latent_is_valid(output_path, expected_shape)
         t2 = time.time()
-        # logging.info(f"check existing {output_path} {t2-t1:.6f}s valid={is_skip_valid_existing}")
+        # logger.info(f"check existing {output_path} {t2-t1:.6f}s valid={is_skip_valid_existing}")
         if is_skip_valid_existing:
             continue
 
-        logging.info(f"processing {video_stem}")
+        logger.info(f"processing {video_stem}")
 
         process_one(
             sample=sample,
@@ -282,10 +283,10 @@ def main() -> None:
             config=config,
         )
 
-    logging.info("finished its shard, waiting for others...")
+    logger.info("finished its shard, waiting for others...")
     dist.barrier(group=finish_barrier_group)
     if dist.get_rank() == 0:
-        logging.info("all ranks finished")
+        logger.info("all ranks finished")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from utils.misc import format_dict
 from utils.logging import (
+    logger,
     _current_node_rank,
     _current_process_rank,
     _configure_logging,
@@ -53,7 +54,7 @@ def main(
     )
     log_environment_versions()
 
-    logging.info(
+    logger.info(
         f"""
 [env check] PYTORCH_CUDA_ALLOC_CONF={os.environ.get('PYTORCH_CUDA_ALLOC_CONF')}, NCCL_DEBUG={os.environ.get('NCCL_DEBUG')}, RANK={os.environ.get('RANK')}, LOCAL_RANK={os.environ.get('LOCAL_RANK')}
 {config_name = }
@@ -76,7 +77,7 @@ config = {format_dict(config)}
             code_backup_dir,
             overwrite=True,
         )
-        logging.info(f"Code backup saved to {code_backup_dir}")
+        logger.info(f"Code backup saved to {code_backup_dir}")
 
     try:
         if config.trainer == "diffusion":
@@ -94,7 +95,7 @@ config = {format_dict(config)}
         # Defensively clear any leaked logging.disable state from inner code paths
         # so the traceback isn't silently swallowed.
         logging.disable(logging.NOTSET)
-        logging.exception("Training failed with uncaught exception")
+        logger.exception("Training failed with uncaught exception")
         raise
 
 

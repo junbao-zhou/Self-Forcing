@@ -1,5 +1,5 @@
 import gc
-import logging
+from utils.logging import logger
 import os
 import shutil
 import time
@@ -54,7 +54,7 @@ class BaseTrainer:
                     "model.pt",
                 ),
             )
-            logging.info(
+            logger.info(
                 f"Model saved to {os.path.join(self.output_path, f'checkpoint_model_{self.step:06d}', 'model.pt')}"
             )
 
@@ -65,10 +65,10 @@ class BaseTrainer:
             if len(checkpoints) > max_checkpoints:
                 for old_ckpt in checkpoints[:-max_checkpoints]:
                     shutil.rmtree(os.path.join(self.output_path, old_ckpt))
-                    logging.info(f"Deleted old checkpoint: {old_ckpt}")
+                    logger.info(f"Deleted old checkpoint: {old_ckpt}")
 
     def run_inference(self, generator):
-        logging.info("Gathering generator state dict for inference...")
+        logger.info("Gathering generator state dict for inference...")
         generator_state = fsdp_state_dict(generator)
 
         if not self.is_main_process:
@@ -97,7 +97,7 @@ class BaseTrainer:
                 output_video_dir.mkdir(parents=True, exist_ok=True)
                 output_video_path = output_video_dir / f"{idx}-{prompt[:50].replace(' ', '_')}.mp4"
                 write_video(output_video_path, video[0], fps=8)
-                logging.info(f"Saved inference video to {output_video_path}")
+                logger.info(f"Saved inference video to {output_video_path}")
 
         del pipeline
         gc.collect()
@@ -123,7 +123,7 @@ class BaseTrainer:
     def maybe_run_gc(self):
         if self.step % self.config.gc_interval == 0:
             if dist.get_rank() == 0:
-                logging.info("DistGarbageCollector: Running GC.")
+                logger.info("DistGarbageCollector: Running GC.")
             gc.collect()
             # gc only frees Python objects; without empty_cache the CUDA caching
             # allocator still holds the released blocks, so empty_cache pairs

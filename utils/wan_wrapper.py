@@ -1,4 +1,4 @@
-import logging
+from utils.logging import logger
 import types
 from typing import List, Optional
 import torch
@@ -182,7 +182,7 @@ class WanDiffusionWrapper(torch.nn.Module):
         sink_size=0,
         checkpoint_path: Optional[str] = None,
     ):
-        logging.debug(
+        logger.debug(
             f"""
     {config_path = },
     {timestep_shift = },
@@ -326,7 +326,7 @@ class WanDiffusionWrapper(torch.nn.Module):
         aug_t: Optional[torch.Tensor] = None,
         cache_start: Optional[int] = None,
     ) -> torch.Tensor:
-        logging.debug(
+        logger.debug(
             f"""
     {noisy_image_or_video.shape = },
     {conditional_dict.keys() = },

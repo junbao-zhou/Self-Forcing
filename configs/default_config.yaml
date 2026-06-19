@@ -1,4 +1,3 @@
-independent_first_frame: false
 warp_denoising_step: false
 weight_decay: 0.01
 same_step_across_blocks: true

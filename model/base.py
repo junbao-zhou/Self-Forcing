@@ -88,31 +88,20 @@ class BaseModel(nn.Module):
                 dtype=torch.long,
             ).repeat(1, num_frame)
             return timestep
-        else:
-            timestep = torch.randint(
-                min_timestep,
-                max_timestep,
-                [batch_size, num_frame],
-                device=self.device,
-                dtype=torch.long,
-            )
-            # make the noise level the same within every block
-            if self.independent_first_frame:
-                # the first frame is always kept the same
-                timestep_from_second = timestep[:, 1:]
-                timestep_from_second = timestep_from_second.reshape(
-                    timestep_from_second.shape[0], -1, num_frame_per_block
-                )
-                timestep_from_second[:, :, 1:] = timestep_from_second[:, :, 0:1]
-                timestep_from_second = timestep_from_second.reshape(
-                    timestep_from_second.shape[0], -1
-                )
-                timestep = torch.cat([timestep[:, 0:1], timestep_from_second], dim=1)
-            else:
-                timestep = timestep.reshape(timestep.shape[0], -1, num_frame_per_block)
-                timestep[:, :, 1:] = timestep[:, :, 0:1]
-                timestep = timestep.reshape(timestep.shape[0], -1)
-            return timestep
+
+        assert num_frame % num_frame_per_block == 0
+        timestep = torch.randint(
+            min_timestep,
+            max_timestep,
+            [batch_size, num_frame],
+            device=self.device,
+            dtype=torch.long,
+        )
+        # make the noise level the same within every block
+        timestep = timestep.reshape(timestep.shape[0], -1, num_frame_per_block)
+        timestep[:, :, 1:] = timestep[:, :, 0:1]
+        timestep = timestep.reshape(timestep.shape[0], -1)
+        return timestep
 
 
 class SelfForcingModel(BaseModel):
@@ -165,12 +154,8 @@ class SelfForcingModel(BaseModel):
 
         # During training, the number of generated frames should be uniformly sampled from
         # [21, self.num_training_frames], but still being a multiple of self.num_frame_per_block
-        min_num_frames = 20 if self.args.independent_first_frame else 21
-        max_num_frames = (
-            self.num_training_frames - 1
-            if self.args.independent_first_frame
-            else self.num_training_frames
-        )
+        min_num_frames = 21
+        max_num_frames = self.num_training_frames
         assert max_num_frames % self.num_frame_per_block == 0
         assert min_num_frames % self.num_frame_per_block == 0
         max_num_blocks = max_num_frames // self.num_frame_per_block
@@ -182,10 +167,6 @@ class SelfForcingModel(BaseModel):
         num_generated_blocks = num_generated_blocks.item()
         num_generated_frames = num_generated_blocks * self.num_frame_per_block
         logger.debug(f"{num_generated_frames=}")
-        if self.args.independent_first_frame and initial_latent is None:
-            num_generated_frames += 1
-            min_num_frames += 1
-            logger.debug(f"Adjusted for independent first frame: {num_generated_frames=}, {min_num_frames=}")
         # Sync num_generated_frames across all processes
         noise_shape[1] = num_generated_frames
         logger.debug(f"{noise_shape=}")
@@ -217,10 +198,7 @@ class SelfForcingModel(BaseModel):
         if num_generated_frames != min_num_frames:
             # Currently, we do not use gradient for the first chunk, since it contains image latents
             gradient_mask = torch.ones_like(pred_image_or_video_last_21, dtype=torch.bool)
-            if self.args.independent_first_frame:
-                gradient_mask[:, :1] = False
-            else:
-                gradient_mask[:, : self.num_frame_per_block] = False
+            gradient_mask[:, : self.num_frame_per_block] = False
         else:
             gradient_mask = None
 
@@ -271,7 +249,6 @@ class SelfForcingModel(BaseModel):
             scheduler=self.scheduler,
             generator=self.generator,
             num_frame_per_block=self.num_frame_per_block,
-            independent_first_frame=self.args.independent_first_frame,
             same_step_across_blocks=self.args.same_step_across_blocks,
             last_step_only=self.args.last_step_only,
             num_max_frames=self.num_training_frames,

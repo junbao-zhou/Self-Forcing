@@ -563,7 +563,6 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         self.block_mask = None
 
         self.num_frame_per_block = 1
-        self.independent_first_frame = False
 
     def _set_gradient_checkpointing(self, module, value=False):
         self.gradient_checkpointing = value
@@ -758,80 +757,6 @@ class CausalWanModel(ModelMixin, ConfigMixin):
 
         return block_mask
 
-    @staticmethod
-    def _prepare_blockwise_causal_attn_mask_i2v(
-        device: torch.device | str,
-        num_frames: int = 21,
-        frame_seqlen: int = 1560,
-        num_frame_per_block=4,
-        local_attn_size=-1,
-    ) -> BlockMask:
-        """
-        we will divide the token sequence into the following format
-        [1 latent frame] [N latent frame] ... [N latent frame]
-        The first frame is separated out to support I2V generation
-        We use flexattention to construct the attention mask
-        """
-        total_length = num_frames * frame_seqlen
-
-        # we do right padding to get to a multiple of 128
-        padded_length = math.ceil(total_length / 128) * 128 - total_length
-
-        ends = torch.zeros(total_length + padded_length, device=device, dtype=torch.long)
-
-        # special handling for the first frame
-        ends[:frame_seqlen] = frame_seqlen
-
-        # Block-wise causal mask will attend to all elements that are before the end of the current chunk
-        frame_indices = torch.arange(
-            start=frame_seqlen,
-            end=total_length,
-            step=frame_seqlen * num_frame_per_block,
-            device=device,
-        )
-
-        for idx, tmp in enumerate(frame_indices):
-            ends[tmp : tmp + frame_seqlen * num_frame_per_block] = (
-                tmp + frame_seqlen * num_frame_per_block
-            )
-
-        def attention_mask(b, h, q_idx, kv_idx):
-            if local_attn_size == -1:
-                return (kv_idx < ends[q_idx]) | (q_idx == kv_idx)
-            else:
-                return (
-                    (kv_idx < ends[q_idx])
-                    & (kv_idx >= (ends[q_idx] - local_attn_size * frame_seqlen))
-                ) | (q_idx == kv_idx)
-
-        block_mask = create_block_mask(
-            attention_mask,
-            B=None,
-            H=None,
-            Q_LEN=total_length + padded_length,
-            KV_LEN=total_length + padded_length,
-            _compile=False,
-            device=device,
-        )
-
-        if not dist.is_initialized() or dist.get_rank() == 0:
-            print(
-                f" cache a block wise causal mask with block size of {num_frame_per_block} frames"
-            )
-            print(block_mask)
-
-        # import imageio
-        # import numpy as np
-        # from torch.nn.attention.flex_attention import create_mask
-
-        # mask = create_mask(attention_mask, B=None, H=None, Q_LEN=total_length +
-        #                    padded_length, KV_LEN=total_length + padded_length, device=device)
-        # import cv2
-        # mask = cv2.resize(mask[0, 0].cpu().float().numpy(), (1024, 1024))
-        # imageio.imwrite("mask_%d.jpg" % (0), np.uint8(255. * mask))
-
-        return block_mask
-
     def _forward_inference(
         self,
         x,
@@ -1020,38 +945,24 @@ class CausalWanModel(ModelMixin, ConfigMixin):
         # Construct blockwise causal attn mask
         if self.block_mask is None:
             if clean_x is not None:
-                if self.independent_first_frame:
-                    raise NotImplementedError()
-                else:
-                    self.block_mask = self._prepare_teacher_forcing_mask(
-                        device,
-                        num_frames=x.shape[2],
-                        frame_seqlen=x.shape[-2]
-                        * x.shape[-1]
-                        // (self.patch_size[1] * self.patch_size[2]),
-                        num_frame_per_block=self.num_frame_per_block,
-                    )
+                self.block_mask = self._prepare_teacher_forcing_mask(
+                    device,
+                    num_frames=x.shape[2],
+                    frame_seqlen=x.shape[-2]
+                    * x.shape[-1]
+                    // (self.patch_size[1] * self.patch_size[2]),
+                    num_frame_per_block=self.num_frame_per_block,
+                )
             else:
-                if self.independent_first_frame:
-                    self.block_mask = self._prepare_blockwise_causal_attn_mask_i2v(
-                        device,
-                        num_frames=x.shape[2],
-                        frame_seqlen=x.shape[-2]
-                        * x.shape[-1]
-                        // (self.patch_size[1] * self.patch_size[2]),
-                        num_frame_per_block=self.num_frame_per_block,
-                        local_attn_size=self.local_attn_size,
-                    )
-                else:
-                    self.block_mask = self._prepare_blockwise_causal_attn_mask(
-                        device,
-                        num_frames=x.shape[2],
-                        frame_seqlen=x.shape[-2]
-                        * x.shape[-1]
-                        // (self.patch_size[1] * self.patch_size[2]),
-                        num_frame_per_block=self.num_frame_per_block,
-                        local_attn_size=self.local_attn_size,
-                    )
+                self.block_mask = self._prepare_blockwise_causal_attn_mask(
+                    device,
+                    num_frames=x.shape[2],
+                    frame_seqlen=x.shape[-2]
+                    * x.shape[-1]
+                    // (self.patch_size[1] * self.patch_size[2]),
+                    num_frame_per_block=self.num_frame_per_block,
+                    local_attn_size=self.local_attn_size,
+                )
 
         if y is not None:
             x = [torch.cat([u, v], dim=0) for u, v in zip(x, y)]

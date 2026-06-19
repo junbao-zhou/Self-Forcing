@@ -14,7 +14,6 @@ class SelfForcingTrainingPipeline:
         scheduler: SchedulerInterface,
         generator: WanDiffusionWrapper,
         num_frame_per_block=3,
-        independent_first_frame: bool = False,
         same_step_across_blocks: bool = False,
         last_step_only: bool = False,
         num_max_frames: int = 21,
@@ -39,7 +38,6 @@ class SelfForcingTrainingPipeline:
 
         self.kv_cache1 = None
         self.kv_cache2 = None
-        self.independent_first_frame = independent_first_frame
         self.same_step_across_blocks = same_step_across_blocks
         self.last_step_only = last_step_only
         self.kv_cache_size = num_max_frames * self.frame_seq_length
@@ -82,17 +80,8 @@ class SelfForcingTrainingPipeline:
 """)
 
         batch_size, num_frames, num_channels, height, width = noise.shape
-        if not self.independent_first_frame or (
-            self.independent_first_frame and initial_latent is not None
-        ):
-            # If the first frame is independent and the first frame is provided, then the number of frames in the
-            # noise should still be a multiple of num_frame_per_block
-            assert num_frames % self.num_frame_per_block == 0
-            num_blocks = num_frames // self.num_frame_per_block
-        else:
-            # Using a [1, 4, 4, 4, 4, 4, ...] model to generate a video without image conditioning
-            assert (num_frames - 1) % self.num_frame_per_block == 0
-            num_blocks = (num_frames - 1) // self.num_frame_per_block
+        assert num_frames % self.num_frame_per_block == 0
+        num_blocks = num_frames // self.num_frame_per_block
 
         logger.debug(f"Computed {num_blocks=}, {num_frames=}, {self.num_frame_per_block=}")
 
@@ -141,8 +130,6 @@ class SelfForcingTrainingPipeline:
 
         # Step 3: Temporal denoising loop
         all_num_frames = [self.num_frame_per_block] * num_blocks
-        if self.independent_first_frame and initial_latent is None:
-            all_num_frames = [1] + all_num_frames
         num_denoising_steps = len(self.denoising_step_list)
         exit_flags = self.generate_and_sync_list(
             len(all_num_frames), num_denoising_steps, device=noise.device

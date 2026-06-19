@@ -72,7 +72,6 @@ class CausalInferencePipeline(torch.nn.Module):
         self.kv_cache1 = None
         self.args = args
         self.num_frame_per_block = getattr(args, "num_frame_per_block", 1)
-        self.independent_first_frame = args.independent_first_frame
         self.local_attn_size = self.generator.model.local_attn_size
 
         logger.info(f"KV inference with {self.num_frame_per_block} frames per block")
@@ -115,17 +114,8 @@ class CausalInferencePipeline(torch.nn.Module):
                 It is normalized to be in the range [0, 1].
         """
         batch_size, num_frames, num_channels, height, width = noise.shape
-        if not self.independent_first_frame or (
-            self.independent_first_frame and initial_latent is not None
-        ):
-            # If the first frame is independent and the first frame is provided, then the number of frames in the
-            # noise should still be a multiple of num_frame_per_block
-            assert num_frames % self.num_frame_per_block == 0
-            num_blocks = num_frames // self.num_frame_per_block
-        else:
-            # Using a [1, 4, 4, 4, 4, 4, ...] model to generate a video without image conditioning
-            assert (num_frames - 1) % self.num_frame_per_block == 0
-            num_blocks = (num_frames - 1) // self.num_frame_per_block
+        assert num_frames % self.num_frame_per_block == 0
+        num_blocks = num_frames // self.num_frame_per_block
         num_input_frames = initial_latent.shape[1] if initial_latent is not None else 0
         num_output_frames = num_frames + num_input_frames  # add the initial latent frames
         conditional_dict = self.text_encoder(text_prompts=text_prompts)
@@ -174,35 +164,19 @@ class CausalInferencePipeline(torch.nn.Module):
         # Step 2: Cache context feature
         current_start_frame = 0
         if initial_latent is not None:
-            timestep = torch.ones([batch_size, 1], device=noise.device, dtype=torch.int64) * 0
-            if self.independent_first_frame:
-                # Assume num_input_frames is 1 + self.num_frame_per_block * num_input_blocks
-                assert (num_input_frames - 1) % self.num_frame_per_block == 0
-                num_input_blocks = (num_input_frames - 1) // self.num_frame_per_block
-                output[:, :1] = initial_latent[:, :1]
-                if do_not_recompute_initial_latents:
-                    pass
-                else:
-                    logger.info(f"Recompute KV cache based on Initial Latents")
-                    self.generator(
-                        noisy_image_or_video=initial_latent[:, :1],
-                        conditional_dict=conditional_dict,
-                        timestep=timestep * 0,
-                        kv_cache=self.kv_cache1,
-                        crossattn_cache=self.crossattn_cache,
-                        current_start=current_start_frame * self.frame_seq_length,
-                    )
-                current_start_frame += 1
-            else:
-                # Assume num_input_frames is self.num_frame_per_block * num_input_blocks
-                assert num_input_frames % self.num_frame_per_block == 0
-                num_input_blocks = num_input_frames // self.num_frame_per_block
+            assert num_input_frames % self.num_frame_per_block == 0
+            num_input_blocks = num_input_frames // self.num_frame_per_block
 
             for _ in range(num_input_blocks):
                 current_ref_latents = initial_latent[
                     :,
                     current_start_frame : current_start_frame + self.num_frame_per_block,
                 ]
+                timestep = torch.zeros(
+                    [batch_size, current_ref_latents.shape[1]],
+                    device=noise.device,
+                    dtype=torch.int64,
+                )
                 output[
                     :,
                     current_start_frame : current_start_frame + self.num_frame_per_block,
@@ -228,8 +202,6 @@ class CausalInferencePipeline(torch.nn.Module):
 
         # Step 3: Temporal denoising loop
         all_num_frames = [self.num_frame_per_block] * num_blocks
-        if self.independent_first_frame and initial_latent is None:
-            all_num_frames = [1] + all_num_frames
         for current_num_frames in all_num_frames:
             if profile:
                 block_start.record()

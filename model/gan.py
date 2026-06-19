@@ -35,9 +35,6 @@ class GAN(SelfForcingModel):
         )
         self.fake_score.model.requires_grad_(True)
 
-        self.independent_first_frame = getattr(args, "independent_first_frame", False)
-        if self.independent_first_frame:
-            self.generator.model.independent_first_frame = True
         if args.gradient_checkpointing:
             self.generator.enable_gradient_checkpointing()
             self.fake_score.enable_gradient_checkpointing()

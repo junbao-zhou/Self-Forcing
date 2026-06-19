@@ -1,4 +1,3 @@
-import argparse
 import os
 import time
 
@@ -32,70 +31,28 @@ from demo_utils.memory import gpu, get_cuda_free_memory_gb, DynamicSwapInstaller
 
 from pathlib import Path
 
-config_name = "self_forcing_dmd_vsink"
-output_chunk_number = 21
-output_latent_frame_number = 21
-# output_latent_frame_number = 81
-seed = 42
-import sys
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-sys.argv.extend(
-    [
-        "--output_folder",
-        f"outputs/inference/{output_latent_frame_number}-{config_name}-seed{seed}",
-        "--config_dir",
-        "configs",
-        "--config_name",
-        config_name,
-        "--num_output_frames",
-        f"{output_latent_frame_number}",
-        "--data_path",
-        "prompts/MovieGenVideoBench_extended.txt",
-        "--checkpoint_path",
-        "./checkpoints/self_forcing_dmd.pt",
-        "--use_ema",
-        "--seed",
-        f"{seed}",
-        "--max_video_num",
-        "20",
-    ]
-)
-print(f"{sys.argv = }")
+timestamp_str = time.strftime("%Y-%m-%d_%H-%M-%S")
+
+class InferenceConfig(BaseSettings):
+    model_config = SettingsConfigDict(cli_parse_args=True)
+
+    config_dir: str = "configs"
+    config_name: str = "self_forcing_dmd_vsink"
+    checkpoint_path: str = "./checkpoints/self_forcing_dmd.pt"
+    data_path: str = "prompts/MovieGenVideoBench_extended.txt"
+    extended_prompt_path: str | None = None
+    output_folder: str = f"outputs/inference-{timestamp_str}/21-self_forcing_dmd_vsink-seed42"
+    num_output_frames: int = 21
+    i2v: bool = False
+    use_ema: bool = True
+    seed: int = 42
+    num_samples: int = 1
+    max_video_num: int = 20
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--config_dir", type=str, help="Directory to the config file")
-parser.add_argument("--config_name", type=str, help="Name to the config file")
-parser.add_argument("--checkpoint_path", type=str, help="Path to the checkpoint folder")
-parser.add_argument("--data_path", type=str, help="Path to the dataset")
-parser.add_argument("--extended_prompt_path", type=str, help="Path to the extended prompt")
-parser.add_argument("--output_folder", type=str, help="Output folder")
-parser.add_argument(
-    "--num_output_frames",
-    type=int,
-    default=21,
-    help="Number of overlap frames between sliding windows",
-)
-parser.add_argument(
-    "--i2v",
-    action="store_true",
-    help="Whether to perform I2V (or T2V by default)",
-)
-parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA parameters")
-parser.add_argument("--seed", type=int, default=0, help="Random seed")
-parser.add_argument(
-    "--num_samples",
-    type=int,
-    default=1,
-    help="Number of samples to generate per prompt",
-)
-parser.add_argument(
-    "--max_video_num",
-    type=int,
-    default=-1,
-    help="Maximum number of videos to generate (for debugging, -1 for no limit)",
-)
-args = parser.parse_args()
+args = InferenceConfig()
 
 # Initialize distributed inference
 if "LOCAL_RANK" in os.environ:
@@ -126,9 +83,8 @@ print(f"{config = }")
 logdir = Path(args.output_folder)
 logdir.mkdir(parents=True, exist_ok=True)
 
-time_str = time.strftime("%Y-%m-%d_%H-%M-%S")
 _configure_logging(
-    logdir / f"inference-{time_str}.log",
+    logdir / f"inference.log",
     logging_level=string_to_logging_level(config.logging_level),
 )
 log_environment_versions()

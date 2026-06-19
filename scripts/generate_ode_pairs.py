@@ -11,10 +11,16 @@ import os
 
 
 def init_model(
-    device,
-):
-    model = WanDiffusionWrapper().to(device).to(torch.float32)
-    encoder = WanTextEncoder().to(device).to(torch.float32)
+    device: int | torch.device,
+    generator_config_path: str,
+    text_encoder_checkpoint_path: str,
+) -> tuple[WanDiffusionWrapper, WanTextEncoder, FlowMatchScheduler, dict]:
+    model = WanDiffusionWrapper(config_path=generator_config_path).to(device).to(torch.float32)
+    encoder = (
+        WanTextEncoder(checkpoint_path=text_encoder_checkpoint_path)
+        .to(device)
+        .to(torch.float32)
+    )
     model.model.requires_grad_(False)
 
     scheduler = FlowMatchScheduler(shift=8.0, sigma_min=0.0, extra_one_step=True)
@@ -34,6 +40,8 @@ def main():
     parser.add_argument("--output_folder", type=str)
     parser.add_argument("--caption_path", type=str)
     parser.add_argument("--guidance_scale", type=float, default=6.0)
+    parser.add_argument("--generator_config_path", type=str, required=True)
+    parser.add_argument("--text_encoder_checkpoint_path", type=str, required=True)
 
     args = parser.parse_args()
 
@@ -46,7 +54,11 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
-    model, encoder, scheduler, unconditional_dict = init_model(device=device)
+    model, encoder, scheduler, unconditional_dict = init_model(
+        device=device,
+        generator_config_path=args.generator_config_path,
+        text_encoder_checkpoint_path=args.text_encoder_checkpoint_path,
+    )
 
     dataset = TextDataset(args.caption_path)
 

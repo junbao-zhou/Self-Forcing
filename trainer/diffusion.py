@@ -39,23 +39,31 @@ class Trainer(BaseTrainer):
         super().__init__(config)
         self.causal = config.causal
 
-        # Step 2: Initialize the model and optimizer
-        self.model = CausalDiffusion(config, device=self.device)
+        # Step 2: Initialize the model and optimizer.
+        self.model = CausalDiffusion(
+            config,
+            device=self.device,
+        )
+        logger.info("Begin FSDP wrapping model generator")
         self.model.generator = fsdp_wrap(
             self.model.generator,
             sharding_strategy=config.sharding_strategy,
             mixed_precision=config.mixed_precision,
             wrap_strategy=config.generator_fsdp_wrap_strategy,
         )
+        logger.info("Finished FSDP wrapping model generator")
 
+        logger.info("Begin FSDP wrapping model text_encoder")
         self.model.text_encoder = fsdp_wrap(
             self.model.text_encoder,
             sharding_strategy=config.sharding_strategy,
             mixed_precision=config.mixed_precision,
             wrap_strategy=config.text_encoder_fsdp_wrap_strategy,
         )
+        logger.info("Finished FSDP wrapping model text_encoder")
 
         if not config.no_visualize or config.load_raw_video:
+            logger.info("Begin moving VAE to device")
             self.model.vae = self.model.vae.to(
                 device=self.device,
                 dtype=(torch.bfloat16 if config.mixed_precision else torch.float32),

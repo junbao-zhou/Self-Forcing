@@ -37,12 +37,14 @@ class WanTextEncoder(torch.nn.Module):
                     weights_only=False,
                 )
             )
+            logger.info(f"Finished loading text encoder weights from {checkpoint_path}")
 
         self.tokenizer = HuggingfaceTokenizer(
             name="wan_models/Wan2.1-T2V-1.3B/google/umt5-xxl/",
             seq_len=512,
             clean="whitespace",
         )
+        logger.info("Finished initializing text tokenizer from wan_models/Wan2.1-T2V-1.3B/google/umt5-xxl/")
 
     @property
     def device(
@@ -121,6 +123,7 @@ class WanVAEWrapper(torch.nn.Module):
             .eval()
             .requires_grad_(False)
         )
+        logger.info(f"Finished initializing VAE from {checkpoint_path}")
 
     def encode_to_latent(
         self,
@@ -201,6 +204,7 @@ class WanDiffusionWrapper(torch.nn.Module):
                     local_attn_size=local_attn_size,
                     sink_size=sink_size,
                 )
+                logger.info(f"Initialized CausalWanModel from checkpoint {checkpoint_path}")
             else:
                 config = CausalWanModel.load_config(config_path)
                 self.model = CausalWanModel.from_config(
@@ -208,12 +212,15 @@ class WanDiffusionWrapper(torch.nn.Module):
                     local_attn_size=local_attn_size,
                     sink_size=sink_size,
                 )
+                logger.info(f"Initialized CausalWanModel from config {config_path} (no checkpoint)")
         else:
             if checkpoint_path is not None:
                 self.model = WanModel.from_pretrained(checkpoint_path)
+                logger.info(f"Initialized WanModel from checkpoint {checkpoint_path}")
             else:
                 config = WanModel.load_config(config_path)
                 self.model = WanModel.from_config(config)
+                logger.info(f"Initialized WanModel from config {config_path} (no checkpoint)")
         self.model.eval()
 
         # For non-causal diffusion, all frames share the same timestep

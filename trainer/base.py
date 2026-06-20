@@ -12,7 +12,10 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision.io import write_video
 
 from pipeline import CausalInferencePipeline
-from utils.distributed import fsdp_state_dict
+from utils.distributed import (
+    fsdp_state_dict,
+    launch_distributed_job,
+)
 from utils.misc import set_seed
 
 
@@ -20,14 +23,16 @@ class BaseTrainer:
     def __init__(self, config):
         self.config = config
         self.step = 0
+
+        # Step 1: Initialize the distributed training environment (rank, seed, dtype, logging etc.)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+        launch_distributed_job()
+
         self.device = torch.cuda.current_device()
         self.is_main_process = dist.get_rank() == 0
         self.dtype = torch.bfloat16 if config.mixed_precision else torch.float32
-
-        if config.seed == 0:
-            random_seed = torch.randint(0, 10000000, (1,), device=self.device)
-            dist.broadcast(random_seed, src=0)
-            config.seed = random_seed.item()
 
         set_seed(config.seed + dist.get_rank())
 
@@ -39,6 +44,7 @@ class BaseTrainer:
         self.output_path = config.logdir
         self.max_grad_norm = 10.0
         self.previous_time = None
+        self.causal = config.causal
 
     def save_checkpoint(self, state_dict):
         if self.is_main_process:

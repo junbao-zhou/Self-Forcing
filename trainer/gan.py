@@ -22,16 +22,9 @@ class Trainer(BaseTrainer):
         self,
         config,
     ):
-        # Step 1: Initialize the distributed training environment (rank, seed, dtype, logging etc.)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
-        launch_distributed_job()
-        global_rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
 
         super().__init__(config)
-        self.causal = config.causal
+        self.world_size = dist.get_world_size()
 
         # Configuration for discriminator warmup
         self.discriminator_warmup_steps = getattr(config, "discriminator_warmup_steps", 0)

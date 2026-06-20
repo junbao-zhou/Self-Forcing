@@ -29,15 +29,7 @@ class Trainer(BaseTrainer):
     {config = }
 """
         )
-        # Step 1: Initialize the distributed training environment (rank, seed, dtype, logging etc.)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-
-        launch_distributed_job()
-        global_rank = dist.get_rank()
-
         super().__init__(config)
-        self.causal = config.causal
 
         # Step 2: Initialize the model and optimizer.
         self.model = CausalDiffusion(

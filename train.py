@@ -92,8 +92,8 @@ config = {format_dict(config)}
     except BaseException:
         # Hydra catches exceptions in @hydra.main and prints to stderr only.
         # Re-route the traceback through logging so it lands in the per-rank log file.
-        # Defensively clear any leaked logging.disable state from inner code paths
-        # so the traceback isn't silently swallowed.
+        # Defensively clear any global logging.disable state so the traceback
+        # isn't silently swallowed.
         logging.disable(logging.NOTSET)
         logger.exception("Training failed with uncaught exception")
         raise

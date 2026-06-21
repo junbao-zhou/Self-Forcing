@@ -33,7 +33,7 @@ logdir: logs
 logging_level: info
 disable_wandb: true
 
-max_checkpoints: 5
+max_checkpoints: 2
 total_training_steps: 600
 inference_interval: 200
 num_inference_prompts: 4

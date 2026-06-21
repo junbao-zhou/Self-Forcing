@@ -12,6 +12,7 @@ MASTER_PORT = os.environ.get("MASTER_PORT", "29500")
 print(f"{MASTER_ADDR = }, {MASTER_PORT = }")
 
 import sys
+import shlex
 from torch.distributed.run import main as torchrun_main
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,10 +35,21 @@ class TrainSettings(BaseSettings):
         default="self_forcing_dmd",
         description="Hydra config name.",
     )
+    train_extra_arguments: str = Field(
+        default="",
+        description="Extra arguments passed to train.py after built-in Hydra overrides.",
+    )
+
+
+def parse_train_extra_arguments(train_extra_arguments: str) -> list[str]:
+    """Parse a shell-like string into extra train.py arguments."""
+
+    return shlex.split(train_extra_arguments)
 
 
 if __name__ == "__main__":
     settings = TrainSettings()
+    train_extra_arguments = parse_train_extra_arguments(settings.train_extra_arguments)
     sys.argv = [
         "torchrun",
         f"--nnodes={settings.machine_num}",
@@ -51,5 +63,6 @@ if __name__ == "__main__":
         f"--config-name={settings.config_name}",
         f"logdir=logs/{settings.save_id}-{settings.config_name}",
         "disable_wandb=true",
+        *train_extra_arguments,
     ]
     torchrun_main()

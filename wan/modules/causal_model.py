@@ -866,7 +866,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 # DEBUG/INFO for non-first blocks to avoid flooding logs.
                 # Keep WARNING+ enabled so exceptions / `logging.exception`
                 # still surface if the block forward throws.
-                logging.disable(logging.INFO)
+                previous_level = logger.level
+                logger.setLevel(max(previous_level, logging.WARNING))
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 kwargs.update(
                     {
@@ -892,7 +893,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 )
                 x = block(x, **kwargs)
             if block_index != 0:
-                logging.disable(logging.NOTSET)
+                logger.setLevel(previous_level)
 
         # head
         x = self.head(x, e.unflatten(dim=0, sizes=t.shape).unsqueeze(2))
@@ -1058,7 +1059,8 @@ class CausalWanModel(ModelMixin, ConfigMixin):
                 # DEBUG/INFO for non-first blocks to avoid flooding logs.
                 # Keep WARNING+ enabled so exceptions / `logging.exception`
                 # still surface if the block forward throws.
-                logging.disable(logging.INFO)
+                previous_level = logger.level
+                logger.setLevel(max(previous_level, logging.WARNING))
             if torch.is_grad_enabled() and self.gradient_checkpointing:
                 x = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(block),
@@ -1069,7 +1071,7 @@ class CausalWanModel(ModelMixin, ConfigMixin):
             else:
                 x = block(x, **kwargs)
             if block is not self.blocks[0]:
-                logging.disable(logging.NOTSET)
+                logger.setLevel(previous_level)
 
         if clean_x is not None:
             x = x[:, x.shape[1] // 2 :]

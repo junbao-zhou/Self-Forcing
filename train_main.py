@@ -13,42 +13,43 @@ print(f"{MASTER_ADDR = }, {MASTER_PORT = }")
 
 import sys
 from torch.distributed.run import main as torchrun_main
-import argparse
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def build_arg_parser():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--save_id",
-        type=str,
-        help="The id for this training run, used for saving checkpoints and logs",
+class TrainSettings(BaseSettings):
+    """Parse train launcher settings from command-line arguments."""
+
+    model_config = SettingsConfigDict(cli_parse_args=True)
+
+    save_id: str = Field(
+        default="test",
+        description="The id for this training run, used for saving checkpoints and logs.",
     )
-    parser.add_argument(
-        "--machine_num",
-        type=int,
+    machine_num: int = Field(
         default=1,
-        help="Number of machines to use for distributed training",
+        description="Number of machines to use for distributed training.",
     )
-    return parser
+    config_name: str = Field(
+        default="self_forcing_dmd",
+        description="Hydra config name.",
+    )
 
 
 if __name__ == "__main__":
-    arg_parser = build_arg_parser()
-    args = arg_parser.parse_args()
-
-    config_name = "self_forcing_dmd"
+    settings = TrainSettings()
     sys.argv = [
         "torchrun",
-        f"--nnodes={args.machine_num}",
+        f"--nnodes={settings.machine_num}",
         f"--nproc_per_node={gpu_num}",
-        f"--rdzv_id={args.save_id}",
+        f"--rdzv_id={settings.save_id}",
         "--rdzv_backend=c10d",
         f"--rdzv_endpoint={MASTER_ADDR}:{MASTER_PORT}",
         "train.py",
         "--",
         "--config-path=configs",
-        f"--config-name={config_name}",
-        f"logdir=logs/{args.save_id}-{config_name}",
+        f"--config-name={settings.config_name}",
+        f"logdir=logs/{settings.save_id}-{settings.config_name}",
         "disable_wandb=true",
     ]
     torchrun_main()

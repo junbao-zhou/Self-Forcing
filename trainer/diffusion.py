@@ -234,13 +234,13 @@ class Trainer(BaseTrainer):
         ):
             self.generator_ema = EMA_FSDP(self.model.generator, decay=self.config.ema_weight)
 
-        wandb_loss_dict = {
+        logging_loss_dict = {
             "generator_loss": generator_loss.item(),
             "generator_grad_norm": generator_grad_norm.item(),
         }
 
         # Step 4: Logging
-        self.log_metrics(wandb_loss_dict)
+        self.log_metrics(logging_loss_dict)
         self.maybe_run_gc()
 
     def generate_video(

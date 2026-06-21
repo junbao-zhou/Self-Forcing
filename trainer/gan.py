@@ -417,7 +417,7 @@ class Trainer(BaseTrainer):
                 torch.cuda.empty_cache()
 
             # Logging
-            wandb_loss_dict = {
+            logging_loss_dict = {
                 "generator_grad_norm": generator_log_dict["generator_grad_norm"],
                 "critic_grad_norm": critic_log_dict["critic_grad_norm"],
                 "real_logit": critic_log_dict["noisy_real_logit"],
@@ -426,26 +426,26 @@ class Trainer(BaseTrainer):
                 "r2_loss": critic_log_dict["r2_loss"],
             }
             if TRAIN_GENERATOR:
-                wandb_loss_dict.update(
+                logging_loss_dict.update(
                     {
                         "generator_grad_norm": generator_log_dict["generator_grad_norm"],
                     }
                 )
-            self.all_gather_dict(wandb_loss_dict)
-            wandb_loss_dict["diff_logit"] = (
-                wandb_loss_dict["real_logit"] - wandb_loss_dict["fake_logit"]
+            self.all_gather_dict(logging_loss_dict)
+            logging_loss_dict["diff_logit"] = (
+                logging_loss_dict["real_logit"] - logging_loss_dict["fake_logit"]
             )
-            wandb_loss_dict["reg_loss"] = 0.5 * (
-                wandb_loss_dict["r1_loss"] + wandb_loss_dict["r2_loss"]
+            logging_loss_dict["reg_loss"] = 0.5 * (
+                logging_loss_dict["r1_loss"] + logging_loss_dict["r2_loss"]
             )
 
             if self.is_main_process:
                 if self.in_discriminator_warmup:
                     warmup_status = f"[WARMUP {self.step}/{self.discriminator_warmup_steps}] Training only discriminator params"
                     print(warmup_status)
-                    wandb_loss_dict.update({"warmup_status": 1.0})
+                    logging_loss_dict.update({"warmup_status": 1.0})
 
-                self.log_metrics(wandb_loss_dict)
+                self.log_metrics(logging_loss_dict)
 
             self.maybe_run_gc()
             torch.cuda.empty_cache()

@@ -19,10 +19,6 @@ guidance_scale: 3.0
 denoising_loss_type: flow
 mixed_precision: true
 seed: 0
-wandb_host: WANDB_HOST
-wandb_key: WANDB_KEY
-wandb_entity: WANDB_ENTITY
-wandb_project: WANDB_PROJECT
 sharding_strategy: hybrid_full
 lr: 2.0e-06
 beta1: 0.0

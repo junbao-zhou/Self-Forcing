@@ -31,8 +31,7 @@ no_visualize: false
 vae_offload_cpu: true
 logdir: logs
 logging_level: info
-wandb_save_dir: ""
-disable_wandb: false
+disable_wandb: true
 
 max_checkpoints: 5
 total_training_steps: 600

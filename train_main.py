@@ -3,6 +3,7 @@ import os
 os.environ["NCCL_DEBUG"] = "WARN"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 gpu_num = len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 

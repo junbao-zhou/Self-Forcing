@@ -3,8 +3,7 @@ import logging
 from utils.logging import logger
 
 from model import CausalDiffusion
-from utils.dataset import OpenVidDataset, OpenVidLatentDataset, cycle
-import torch.distributed as dist
+from utils.dataset import OpenVidDataset, OpenVidLatentDataset, cycle_with_sampler_epoch
 from omegaconf import OmegaConf
 import torch
 import os
@@ -15,7 +14,6 @@ from utils.distributed import (
     barrier,
     fsdp_wrap,
     fsdp_state_dict,
-    launch_distributed_job,
 )
 
 
@@ -68,6 +66,8 @@ class Trainer(BaseTrainer):
             weight_decay=config.weight_decay,
         )
 
+        self.set_training_seed()
+
         # Step 3: Initialize the dataloader
         if config.load_raw_video:
             latent_frames = config.image_or_video_shape[1]
@@ -82,19 +82,15 @@ class Trainer(BaseTrainer):
                 latent_folder=config.latent_folder,
                 csv_path=config.latent_csv_path,
             )
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset, shuffle=True, drop_last=True
-        )
-        dataloader = torch.utils.data.DataLoader(
+
+        dataloader, sampler = self.build_distributed_dataloader(
             dataset,
             batch_size=config.batch_size,
-            sampler=sampler,
-            num_workers=8,
         )
 
-        if dist.get_rank() == 0:
+        if self.is_main_process:
             print("DATASET SIZE %d" % len(dataset))
-        self.dataloader = cycle(dataloader)
+        self.dataloader = cycle_with_sampler_epoch(dataloader, sampler)
 
         ##############################################################################################################
         # 6. Set up EMA parameter containers
@@ -117,7 +113,7 @@ class Trainer(BaseTrainer):
             self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
 
         ##############################################################################################################
-        # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
+        # Initialize generator from pretrained weights if provided.
         if getattr(config, "generator_ckpt", False):
             print(f"Loading pretrained generator from {config.generator_ckpt}")
             state_dict = torch.load(config.generator_ckpt, map_location="cpu")
@@ -215,13 +211,13 @@ class Trainer(BaseTrainer):
         self.generator_optimizer.zero_grad()
         # Silence DEBUG/INFO logs during backward: gradient checkpointing reruns
         # each transformer block under autograd, which bypasses the outer
-        # for-loop's logging.disable wrapping in CausalWanModel and floods the log.
-        # Disable up to INFO only (not CRITICAL) so WARNING/ERROR/CRITICAL still
+        # for-loop's logger level change in CausalWanModel and floods the log.
+        # Silence DEBUG/INFO only so WARNING/ERROR/CRITICAL still
         # get through — important for `logging.exception` if backward throws OOM.
-        prev_disable = logging.root.manager.disable
-        logging.disable(logging.INFO)
+        previous_level = logger.level
+        logger.setLevel(max(previous_level, logging.WARNING))
         generator_loss.backward()
-        logging.disable(prev_disable)
+        logger.setLevel(previous_level)
         generator_grad_norm = self.model.generator.clip_grad_norm_(self.max_grad_norm)
         self.generator_optimizer.step()
         if self.generator_ema is not None:
@@ -264,7 +260,8 @@ class Trainer(BaseTrainer):
     def train(
         self,
     ):
-        while True:
+        while self.step < self.config.total_training_steps:
+            logger.info(f"{self.step = } , starting training step...")
             # Run inference
             if (
                 self.config.inference_interval > 0

@@ -1,6 +1,6 @@
 import gc
 import logging
-from utils.dataset import ODERegressionLMDBDataset, cycle
+from utils.dataset import ODERegressionLMDBDataset, cycle_with_sampler_epoch
 from model import ODERegression
 from collections import defaultdict
 import torch.distributed as dist
@@ -13,7 +13,6 @@ from utils.distributed import (
     barrier,
     fsdp_wrap,
     fsdp_state_dict,
-    launch_distributed_job,
 )
 
 
@@ -24,7 +23,6 @@ class Trainer(BaseTrainer):
     ):
 
         super().__init__(config)
-        self.world_size = dist.get_world_size()
 
         # Step 2: Initialize the model and optimizer
 
@@ -58,30 +56,28 @@ class Trainer(BaseTrainer):
             weight_decay=config.weight_decay,
         )
 
+        self.set_training_seed()
+
         # Step 3: Initialize the dataloader
         dataset = ODERegressionLMDBDataset(
             config.data_path, max_pair=getattr(config, "max_pair", int(1e8))
         )
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset, shuffle=True, drop_last=True
-        )
-        dataloader = torch.utils.data.DataLoader(
+
+        dataloader, sampler = self.build_distributed_dataloader(
             dataset,
             batch_size=config.batch_size,
-            sampler=sampler,
-            num_workers=8,
         )
         total_batch_size = getattr(config, "total_batch_size", None)
         if total_batch_size is not None:
             assert (
                 total_batch_size == config.batch_size * self.world_size
             ), "Gradient accumulation is not supported for ODE training"
-        self.dataloader = cycle(dataloader)
+        self.dataloader = cycle_with_sampler_epoch(dataloader, sampler)
 
         self.step = 0
 
         ##############################################################################################################
-        # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
+        # Initialize generator from pretrained weights if provided.
         if getattr(config, "generator_ckpt", False):
             print(f"Loading pretrained generator from {config.generator_ckpt}")
             state_dict = torch.load(config.generator_ckpt, map_location="cpu")["generator"]
@@ -201,7 +197,8 @@ class Trainer(BaseTrainer):
     def train(
         self,
     ):
-        while True:
+        while self.step < self.config.total_training_steps:
+            logger.info(f"{self.step = } , starting training step...")
             # Run inference
             if (
                 self.config.inference_interval > 0

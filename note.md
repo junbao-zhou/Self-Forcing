@@ -557,3 +557,22 @@ backward 跑完之后，autograd 引擎释放了图里 saved-for-backward 的中
 加完这一组改动后，2 机 16 卡 diffusion trainer：
 - inference 时显存明显下降（VAE 不在 GPU 占地），训练 KV cache 也已释放，inference pipeline 有完整 headroom
 - 不再出现 OOM
+
+
+# Random seed 相关改动
+
+目的：让两次 run 的随机数消费路径尽量一致，方便排查 loss 分叉。
+
+做法：
+
+- [trainer/base.py](trainer/base.py)：拆成 `model_init_seed = config.seed` 和 `training_seed = config.seed + global_rank`。
+- [trainer/base.py](trainer/base.py)：初始化模型前用 `model_init_seed`，保证各 rank 初始权重一致。
+- [trainer/base.py](trainer/base.py)：训练阶段调用 `set_training_seed()`，让每个 rank 使用自己的 `training_seed`。
+- [trainer/base.py](trainer/base.py)：统一封装 `build_distributed_dataloader()`，给 `DistributedSampler` 固定 `seed=model_init_seed`。
+- [trainer/base.py](trainer/base.py)：给 DataLoader 设置 `torch.Generator().manual_seed(training_seed)`。
+- [trainer/base.py](trainer/base.py)：给 worker 设置 `random / numpy / torch` seed，值为 `training_seed + worker_id`。
+- [utils/dataset.py](utils/dataset.py)：新增 `cycle_with_sampler_epoch()`，每轮调用 `sampler.set_epoch(epoch)`。
+- [trainer/diffusion.py](trainer/diffusion.py)、[trainer/distillation.py](trainer/distillation.py)、[trainer/gan.py](trainer/gan.py)、[trainer/ode.py](trainer/ode.py)：统一使用上面的 dataloader 构造和 epoch cycle。
+- [train_main.py](train_main.py)：设置 `CUBLAS_WORKSPACE_CONFIG=:4096:8`。
+
+注意：这些改动只固定随机数和 sampler 路径，不保证 FSDP / NCCL / 浮点归约 bitwise deterministic。

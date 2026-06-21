@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 from utils.lmdb import get_array_shape_from_lmdb, retrieve_row_from_lmdb
 from torch.utils.data import Dataset
 import numpy as np
@@ -389,3 +391,16 @@ def cycle(
     while True:
         for data in dl:
             yield data
+
+
+def cycle_with_sampler_epoch(
+    dataloader: torch.utils.data.DataLoader,
+    sampler: torch.utils.data.distributed.DistributedSampler,
+    start_epoch: int = 0,
+) -> Iterator[object]:
+    epoch = start_epoch
+    while True:
+        sampler.set_epoch(epoch)
+        for data in dataloader:
+            yield data
+        epoch += 1

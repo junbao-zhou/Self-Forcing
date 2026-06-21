@@ -5,7 +5,7 @@ import torch
 
 def set_seed(
     seed: int,
-    deterministic: bool = False,
+    deterministic: bool = True,
 ):
     """
     Helper function for reproducible behavior to set the seed in `random`, `numpy`, `torch`.
@@ -13,7 +13,7 @@ def set_seed(
     Args:
         seed (`int`):
             The seed to set.
-        deterministic (`bool`, *optional*, defaults to `False`):
+        deterministic (`bool`, *optional*, defaults to `True`):
             Whether to use deterministic algorithms where available. Can slow down training.
     """
     random.seed(seed)

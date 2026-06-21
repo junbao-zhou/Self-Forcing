@@ -1,12 +1,11 @@
 import gc
 import logging
 
-from utils.dataset import ShardingLMDBDataset, cycle
+from utils.dataset import ShardingLMDBDataset, cycle_with_sampler_epoch
 from utils.distributed import (
     EMA_FSDP,
     fsdp_wrap,
     fsdp_state_dict,
-    launch_distributed_job,
 )
 from utils.misc import merge_dict_list
 import torch.distributed as dist
@@ -24,7 +23,6 @@ class Trainer(BaseTrainer):
     ):
 
         super().__init__(config)
-        self.world_size = dist.get_world_size()
 
         # Configuration for discriminator warmup
         self.discriminator_warmup_steps = getattr(config, "discriminator_warmup_steps", 0)
@@ -102,23 +100,21 @@ class Trainer(BaseTrainer):
                 betas=(config.beta1_critic, config.beta2_critic),
             )
 
+        self.set_training_seed()
+
         # Step 3: Initialize the dataloader
         self.data_path = config.data_path
         dataset = ShardingLMDBDataset(config.data_path, max_pair=int(1e8))
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset, shuffle=True, drop_last=True
-        )
-        dataloader = torch.utils.data.DataLoader(
+
+        dataloader, sampler = self.build_distributed_dataloader(
             dataset,
             batch_size=config.batch_size,
-            sampler=sampler,
-            num_workers=8,
         )
 
-        if dist.get_rank() == 0:
+        if self.is_main_process:
             print("DATASET SIZE %d" % len(dataset))
 
-        self.dataloader = cycle(dataloader)
+        self.dataloader = cycle_with_sampler_epoch(dataloader, sampler)
 
         ##############################################################################################################
         # 6. Set up EMA parameter containers
@@ -141,7 +137,7 @@ class Trainer(BaseTrainer):
             self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
 
         ##############################################################################################################
-        # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
+        # Initialize generator from pretrained weights if provided.
         if getattr(config, "generator_ckpt", False):
             print(f"Loading pretrained generator from {config.generator_ckpt}")
             state_dict = torch.load(config.generator_ckpt, map_location="cpu")
@@ -157,6 +153,7 @@ class Trainer(BaseTrainer):
             resume_ckpt_path_critic = "none"
             resume_ckpt_path_generator = "none"
 
+        # Resume critic/generator training state if checkpointer paths are configured.
         _, _ = self.checkpointer_critic.try_best_load(
             resume_ckpt_path=resume_ckpt_path_critic,
         )
@@ -318,7 +315,8 @@ class Trainer(BaseTrainer):
     ):
         start_step = self.step
 
-        while True:
+        while self.step < self.config.total_training_steps:
+            logger.info(f"{self.step = } , starting training step...")
             # Run inference
             if (
                 self.config.inference_interval > 0

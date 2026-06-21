@@ -35,7 +35,9 @@ wandb_save_dir: ""
 disable_wandb: false
 
 max_checkpoints: 5
-inference_interval: 500
+total_training_steps: 600
+inference_interval: 200
+num_inference_prompts: 4
 
 # Recommended: prevent Hydra from chdir into run dir (optional but common)
 hydra:

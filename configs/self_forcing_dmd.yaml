@@ -19,7 +19,7 @@ timestep_shift: 5.0
 guidance_scale: 3.0
 denoising_loss_type: flow
 mixed_precision: true
-seed: 0
+seed: 42
 wandb_host: WANDB_HOST
 wandb_key: WANDB_KEY
 wandb_entity: WANDB_ENTITY

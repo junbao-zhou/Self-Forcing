@@ -1,16 +1,14 @@
 import gc
 from utils.logging import logger
 
-from utils.dataset import ShardingLMDBDataset, cycle
+from utils.dataset import ShardingLMDBDataset, cycle_with_sampler_epoch
 from utils.dataset import TextDataset
 from utils.distributed import (
     EMA_FSDP,
     fsdp_wrap,
     fsdp_state_dict,
-    launch_distributed_job,
 )
 from utils.misc import merge_dict_list
-import torch.distributed as dist
 from omegaconf import OmegaConf
 from model import CausVid, DMD, SiD
 import torch
@@ -25,7 +23,6 @@ class Trainer(BaseTrainer):
     ):
 
         super().__init__(config)
-        self.world_size = dist.get_world_size()
 
         # Step 2: Initialize the model and optimizer
         if config.distribution_loss == "causvid":
@@ -89,23 +86,21 @@ class Trainer(BaseTrainer):
             weight_decay=config.weight_decay,
         )
 
+        self.set_training_seed()
+
         # Step 3: Initialize the dataloader
         if self.config.i2v:
             dataset = ShardingLMDBDataset(config.data_path, max_pair=int(1e8))
         else:
             dataset = TextDataset(config.data_path)
-        sampler = torch.utils.data.distributed.DistributedSampler(
-            dataset, shuffle=True, drop_last=True
-        )
-        dataloader = torch.utils.data.DataLoader(
+
+        dataloader, sampler = self.build_distributed_dataloader(
             dataset,
             batch_size=config.batch_size,
-            sampler=sampler,
-            num_workers=8,
         )
 
         logger.info("DATASET SIZE %d" % len(dataset))
-        self.dataloader = cycle(dataloader)
+        self.dataloader = cycle_with_sampler_epoch(dataloader, sampler)
 
         ##############################################################################################################
         # 6. Set up EMA parameter containers
@@ -128,7 +123,7 @@ class Trainer(BaseTrainer):
             self.generator_ema = EMA_FSDP(self.model.generator, decay=ema_weight)
 
         ##############################################################################################################
-        # 7. (If resuming) Load the model and optimizer, lr_scheduler, ema's statedicts
+        # Initialize generator from pretrained weights if provided.
         if getattr(config, "generator_ckpt", False):
             logger.info(f"Loading pretrained generator from {config.generator_ckpt}")
             state_dict = torch.load(config.generator_ckpt, map_location="cpu")
@@ -227,8 +222,15 @@ class Trainer(BaseTrainer):
                 clean_latent=clean_latent,
                 initial_latent=image_latent if self.config.i2v else None,
             )
+            logger.info(
+                f"""
+    {generator_loss.item() = }
+    {generator_log_dict = }
+"""
+            )
 
             generator_loss.backward()
+            logger.info(f"generator_grad_checksum = {sum(parameter.grad.detach().float().sum().item() for parameter in self.model.generator.parameters() if parameter.grad is not None)}")
             generator_grad_norm = self.model.generator.clip_grad_norm_(self.max_grad_norm_generator)
 
             generator_log_dict.update(
@@ -250,6 +252,12 @@ class Trainer(BaseTrainer):
             unconditional_dict=unconditional_dict,
             clean_latent=clean_latent,
             initial_latent=image_latent if self.config.i2v else None,
+        )
+        logger.info(
+            f"""
+    {critic_loss.item() = }
+    {critic_log_dict = }
+"""
         )
 
         critic_loss.backward()
@@ -303,7 +311,8 @@ class Trainer(BaseTrainer):
     ):
         start_step = self.step
 
-        while True:
+        while self.step < self.config.total_training_steps:
+            logger.info(f"{self.step = } , starting training step...")
             # Run inference
             if (
                 self.config.inference_interval > 0

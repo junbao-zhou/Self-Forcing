@@ -30,7 +30,7 @@ no_save: false
 no_visualize: false
 vae_offload_cpu: true
 logdir: logs
-logging_level: debug
+logging_level: info
 wandb_save_dir: ""
 disable_wandb: false
 

@@ -197,7 +197,7 @@ class Trainer(BaseTrainer):
     def train(
         self,
     ):
-        while self.step < self.config.total_training_steps:
+        while self.step <= self.config.total_training_steps:
             logger.info(f"{self.step = } , starting training step...")
             # Run inference
             if (
